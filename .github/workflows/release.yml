@@ -1,0 +1,73 @@
+# Publishes to npm when a version tag is pushed:
+#   npm version patch && git push --follow-tags
+# Needs an npm automation token in the repo secret NPM_TOKEN.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      with_ffmpeg:
+        description: Bundle a mux-only ffmpeg (experimental; otherwise MediaMuxer merges)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME" \
+            || { echo "Tag $GITHUB_REF_NAME does not match package.json"; exit 1; }
+
+      - name: Build ffmpeg
+        if: inputs.with_ffmpeg
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" bash scripts/build_ffmpeg_android.sh
+      - name: Build runtime
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" python scripts/build_android_runtime.py
+      - name: Offline runtime tests
+        run: npm run test:runtime
+
+      - run: npm ci
+      - run: npm run lint && npx jest --ci
+      - run: npm run build
+        env:
+          CI: 1
+
+      # Add --provenance once the repository is public (npm requires a public source repo).
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - > notes.md <<'EOF'
+          import json
+          p = json.load(open('runtime-versions.json'))
+          w = p['wheels']
+          print('Bundled runtime:')
+          print(f"- yt-dlp {w['yt-dlp']['version']} (yt-dlp-ejs {w['yt-dlp-ejs']['version']})")
+          print(f"- Python {p['python']['version']}, QuickJS-ng {p['quickjs-ng']['version']}, certifi {w['certifi']['version']}")
+          print(f"- Extractors: {', '.join(p['extractors'])} (+ generic)")
+          EOF
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md

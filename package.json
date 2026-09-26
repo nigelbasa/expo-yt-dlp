@@ -6,15 +6,18 @@
   "types": "build/index.d.ts",
   "scripts": {
     "build": "node internal/module_scripts/build.js",
+    "build:runtime": "python scripts/build_android_runtime.py",
     "clean": "node internal/module_scripts/clean.js",
     "lint": "eslint src/",
     "test": "node internal/module_scripts/test.js",
+    "test:runtime": "python scripts/host_smoke_test.py -- --list-extractors && python scripts/test_runner_retry.py",
+    "test:online": "python scripts/online_test.py",
+    "deps:check": "python scripts/update_deps.py check",
+    "deps:update": "python scripts/update_deps.py update",
     "prepare": "node internal/module_scripts/prepare.js",
+    "prepublishOnly": "node -e \"require('fs').accessSync('android/src/main/assets/expo-yt-dlp/manifest.json')\" || (echo 'Run npm run build:runtime first' && exit 1)",
     "open:ios": "node internal/module_scripts/open-ios.js",
-    "open:android": "node internal/module_scripts/open-android.js",
-    "build:runtime": "python scripts/build_android_runtime.py",
-    "smoke:host": "python scripts/host_smoke_test.py -- --list-extractors",
-    "prepublishOnly": "node -e \"require('fs').accessSync('android/src/main/assets/expo-yt-dlp/manifest.json')\" || (echo 'Run npm run build:runtime first' && exit 1)"
+    "open:android": "node internal/module_scripts/open-android.js"
   },
   "keywords": [
     "react-native",
@@ -31,7 +34,6 @@
   "author": "expo-yt-dlp contributors <nigelbasarokwe@gmail.com> (https://github.com/nigelbasa)",
   "license": "MIT",
   "homepage": "https://github.com/nigelbasa/expo-yt-dlp#readme",
-  "dependencies": {},
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@types/jest": "^29.2.1",
@@ -40,12 +42,13 @@
     "eslint": "~9.39.4",
     "eslint-config-universe": "^15.0.3",
     "expo": "^57.0.25",
+    "expo-modules-core": "~57.0.19",
     "jest": "^29.7.0",
     "jest-expo": "~57.0.5",
     "prettier": "^3.0.0",
+    "react": "19.2.3",
     "react-native": "0.86.3",
-    "typescript": "^5.9.2",
-    "react": "19.2.3"
+    "typescript": "^5.9.2"
   },
   "jest": {
     "preset": "jest-expo",

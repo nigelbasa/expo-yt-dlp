@@ -1,0 +1,73 @@
+# Weekly: checks PyPI for a newer yt-dlp (and the yt-dlp-ejs it pins, and certifi), rebuilds
+# the stripped runtime with it, runs the tests, and opens a PR with the new pins.
+#
+# Opening PRs with GITHUB_TOKEN needs: Settings -> Actions -> General -> Workflow permissions
+# -> "Allow GitHub Actions to create and approve pull requests". PRs created this way don't
+# trigger the CI workflow on their own; this job already built and tested the change.
+name: Update bundled yt-dlp
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: yt-dlp release channel
+        type: choice
+        options: [stable, nightly]
+        default: stable
+      all:
+        description: Also update Python, QuickJS-ng and ffmpeg
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Update pins, rebuild, run offline tests
+        id: update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" python scripts/update_deps.py update \
+            --channel "${{ inputs.channel || 'stable' }}" ${{ inputs.all && '--all' || '' }} | tee update.log
+          {
+            echo 'summary<<EOF'
+            sed -n '/^Updated runtime-versions.json:/,/^$/p' update.log
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Test against the live sites (informational)
+        id: online
+        if: steps.update.outputs.summary != ''
+        continue-on-error: true
+        run: python scripts/online_test.py | tee online.log
+
+      - uses: peter-evans/create-pull-request@v7
+        if: steps.update.outputs.summary != ''
+        with:
+          branch: deps/update-runtime
+          add-paths: runtime-versions.json
+          commit-message: Update bundled runtime dependencies
+          title: Update bundled yt-dlp runtime
+          body: |
+            ${{ steps.update.outputs.summary }}
+
+            The update workflow rebuilt the stripped runtime with these versions and the offline
+            tests passed (import check of the trimmed bundle, network-retry tests).
+            Live-site check: **${{ steps.online.outcome }}** (see the workflow run log).
+
+            Before releasing: `npm run build:runtime`, try the example app on a device, then bump
+            the package version and tag it.

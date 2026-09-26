@@ -101,7 +101,7 @@ class ExpoYtDlpModule : Module() {
 
     // Without ffmpeg the runner picks, per video, an H.264 video + AAC audio pair to merge
     // here with MediaMuxer (or a single file with video when there is no such pair).
-    val nativeMerge = options.format == null && !options.audioOnly && !ytDlp.hasFfmpeg
+    val nativeMerge = options.format == null && !options.audioOnly && !options.skipMedia && !ytDlp.hasFfmpeg
     val moduleArgs = mutableListOf("--network-retries", options.networkRetries.toString())
     if (nativeMerge) {
       moduleArgs += "--native-merge"
@@ -124,6 +124,8 @@ class ExpoYtDlpModule : Module() {
         args += listOf("-f", "bv*+ba/b", "-S", "vcodec:h264$res,acodec:aac", "--merge-output-format", "mp4")
       }
     }
+    if (options.simulate) args += "--simulate"
+    if (options.skipMedia) args += "--skip-download"
     args += if (options.noPlaylist) "--no-playlist" else "--yes-playlist"
     options.cookiesFile?.let { args += listOf("--cookies", it.removePrefix("file://")) }
     args += options.extraArgs
@@ -174,31 +176,57 @@ class ExpoYtDlpModule : Module() {
       throw e
     }
     if (result.exitCode != 0) throw YtDlpException(YtDlpProcess.errorMessage(result))
-    val finalItems = items ?: throw YtDlpException("yt-dlp finished without reporting its files")
+    val reported = items ?: throw YtDlpException("yt-dlp finished without reporting its files")
 
-    val paths = mutableListOf<String>()
-    for (i in 0 until finalItems.length()) {
-      val item = finalItems.getJSONObject(i)
-      val files = item.getJSONArray("files")
-      val merge = item.optJSONObject("merge")
-      if (merge == null) {
-        for (j in 0 until files.length()) {
-          val path = files.getJSONObject(j).getString("path")
-          paths += if (nativeMerge && files.length() == 1) stripFormatId(path) else path
-        }
-        continue
-      }
-      sendEvent(PROGRESS_EVENT, mapOf("id" to id, "videoId" to item.optStringOrNull("id"), "status" to "merging"))
-      val videoPath = merge.getString("video")
-      val audioPath = merge.getString("audio")
-      val merged = FORMAT_ID_SUFFIX.replace(videoPath, "") + ".mp4"
-      NativeMuxer.merge(videoPath, audioPath, merged)
+    val results = List(reported.length()) { finishItem(id, reported.getJSONObject(it), nativeMerge && !options.simulate) }
+    val outputs = results.sumOf { it.files.size + it.subtitleCount + it.thumbnailCount }
+    if (!options.simulate && outputs == 0) throw YtDlpException("yt-dlp finished without writing any file")
+    return mapOf(
+      "id" to id,
+      "files" to results.flatMap { item -> item.files.map { it["path"] } },
+      "items" to results.map { it.toMap() },
+    )
+  }
+
+  private class FinishedItem(val fields: Map<String, Any?>, val files: List<Map<String, Any?>>) {
+    val subtitleCount = (fields["subtitles"] as? List<*>)?.size ?: 0
+    val thumbnailCount = (fields["thumbnails"] as? List<*>)?.size ?: 0
+    fun toMap() = fields + ("files" to files)
+  }
+
+  /**
+   * Muxes a video's native-merge pair (or tidies a lone file's name) and converts the
+   * runner's item for JS.
+   */
+  @Suppress("UNCHECKED_CAST")
+  private fun finishItem(jobId: String, item: JSONObject, nativeMerge: Boolean): FinishedItem {
+    val fields = (item.toJsValue() as Map<String, Any?>).toMutableMap()
+    val files = (fields.remove("files") as List<Map<String, Any?>>).toMutableList()
+    val merge = fields.remove("merge") as Map<String, Any?>?
+    if (nativeMerge && merge != null) {
+      sendEvent(PROGRESS_EVENT, mapOf("id" to jobId, "videoId" to fields["id"], "status" to "merging"))
+      val video = files.first { it["path"] == merge["video"] }
+      val audio = files.first { it["path"] == merge["audio"] }
+      val videoPath = video["path"] as String
+      val merged = File(FORMAT_ID_SUFFIX.replace(videoPath, "") + ".mp4")
+      NativeMuxer.merge(videoPath, audio["path"] as String, merged.path)
       File(videoPath).delete()
-      File(audioPath).delete()
-      paths += merged
+      File(audio["path"] as String).delete()
+      files.clear()
+      files += video + mapOf(
+        "path" to merged.path,
+        "formatId" to "${video["formatId"]}+${audio["formatId"]}",
+        "ext" to "mp4",
+        "acodec" to audio["acodec"],
+        "size" to merged.length().toDouble(),
+        "sizeIsEstimate" to false,
+      )
+      fields["size"] = merged.length().toDouble()
+      fields["sizeIsEstimate"] = false
+    } else if (nativeMerge && files.size == 1) {
+      files[0] = files[0] + ("path" to stripFormatId(files[0]["path"] as String))
     }
-    if (paths.isEmpty()) throw YtDlpException("yt-dlp finished without downloading any file")
-    return mapOf("id" to id, "files" to paths)
+    return FinishedItem(fields, files)
   }
 
   private fun deletePartial(path: String) {
@@ -224,3 +252,11 @@ private fun JSONObject.optNumber(key: String): Double? =
 
 private fun JSONObject.optStringOrNull(key: String): String? =
   if (isNull(key)) null else optString(key)
+
+/** org.json values -> Maps/Lists/primitives the Expo bridge can pass to JS. */
+private fun Any?.toJsValue(): Any? = when (this) {
+  null, JSONObject.NULL -> null
+  is JSONObject -> keys().asSequence().associateWith { get(it).toJsValue() }
+  is JSONArray -> List(length()) { get(it).toJsValue() }
+  else -> this
+}

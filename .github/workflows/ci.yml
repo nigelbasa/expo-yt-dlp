@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: TypeScript (lint, types, unit tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit -p .
+      - run: npx jest --ci
+      - run: npm run build
+        env:
+          CI: 1
+
+  runtime:
+    name: Android runtime (build + offline tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/cache@v4
+        with:
+          path: .cache/downloads
+          key: downloads-${{ hashFiles('runtime-versions.json') }}
+      # ANDROID_NDK_LATEST_HOME is a runner machine variable, so it's read in the shell.
+      - name: Build runtime (without ffmpeg)
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" python scripts/build_android_runtime.py
+      - name: Import check of the stripped stdlib + trimmed yt-dlp
+        run: python scripts/host_smoke_test.py -- --list-extractors
+      - name: Network retry tests (local server, no internet)
+        run: python scripts/test_runner_retry.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-runtime
+          retention-days: 7
+          path: |
+            android/src/main/jniLibs
+            android/src/main/assets/expo-yt-dlp
+
+  package:
+    name: npm package contents
+    needs: [js, runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/download-artifact@v5
+        with:
+          name: android-runtime
+          path: android/src/main
+      - run: npm ci
+      - run: npm run build
+        env:
+          CI: 1
+      - name: Check what npm would publish
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const [pkg] = require("./pack.json");
+            const files = pkg.files.map((f) => f.path);
+            const need = [
+              "build/index.js", "app.plugin.js", "expo-module.config.json",
+              "android/src/main/jniLibs/arm64-v8a/libytdlp_python.so",
+              "android/src/main/jniLibs/arm64-v8a/libqjs.so",
+              "android/src/main/jniLibs/x86_64/libpython3.14.so",
+              "android/src/main/assets/expo-yt-dlp/site-packages.zip",
+              "android/src/main/assets/expo-yt-dlp/manifest.json",
+            ];
+            const missing = need.filter((f) => !files.includes(f));
+            const leaked = files.filter((f) => /^(\.cache|example|python|scripts|native)\//.test(f));
+            console.log(`${files.length} files, ${(pkg.size / 1e6).toFixed(1)} MB packed, ${(pkg.unpackedSize / 1e6).toFixed(1)} MB unpacked`);
+            if (missing.length) { console.error("missing:", missing); process.exit(1); }
+            if (leaked.length) { console.error("should not be published:", leaked); process.exit(1); }
+          '
+
+  example-app:
+    name: Example app (Gradle build)
+    # Slow (~10 min), so only for PRs and manual runs.
+    if: github.event_name != 'push'
+    needs: runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/download-artifact@v5
+        with:
+          name: android-runtime
+          path: android/src/main
+      - run: npm ci
+      - run: npm ci
+        working-directory: example
+      - run: npx expo prebuild --platform android --no-install
+        working-directory: example
+        env:
+          CI: 1
+      - run: ./gradlew assembleDebug -PreactNativeArchitectures=x86_64 --no-daemon
+        working-directory: example/android

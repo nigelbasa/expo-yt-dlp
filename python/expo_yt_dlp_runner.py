@@ -29,7 +29,6 @@ import sys
 import time
 
 import yt_dlp
-from yt_dlp.downloader.common import FileDownloader
 from yt_dlp.networking.exceptions import (
     CertificateVerifyError,
     HTTPError,
@@ -105,25 +104,66 @@ class ProgressReporter:
              tmpFilename=d.get('tmpfilename'))
 
 
-def result_items(info, native_merge):
+def format_size(fmt):
+    """(bytes, is_estimate) for one format, or for a merged download via its requested_formats."""
+    parts = fmt.get('requested_formats') or [fmt]
+    sizes = [p.get('filesize') or p.get('filesize_approx') for p in parts]
+    if any(s is None for s in sizes):
+        return None, True
+    return sum(sizes), any(not p.get('filesize') for p in parts)
+
+
+def result_items(info, native_merge, *, simulate=False, skip_media=False):
+    """Per-video results: media files (or, when simulating, the files that would be written),
+    subtitle and thumbnail files, sizes, and which video/audio pair to mux natively."""
     entries = info.get('entries') if info.get('_type') in ('playlist', 'multi_video') else [info]
     items = []
     for entry in entries or []:
         if not entry:
             continue
-        downloads = [{
-            'path': dl.get('filepath'),
-            'formatId': dl.get('format_id'),
-            'vcodec': dl.get('vcodec'),
-            'acodec': dl.get('acodec'),
-        } for dl in entry.get('requested_downloads') or [] if dl.get('filepath')]
+        files = []
+        # With --skip-download yt-dlp still reports the media path it would have used.
+        for dl in [] if skip_media else entry.get('requested_downloads') or []:
+            path = dl.get('filepath') or (dl.get('filename') if simulate else None)
+            if not path:
+                continue
+            size, estimate = format_size(dl)
+            files.append({
+                'path': path,
+                'formatId': dl.get('format_id'),
+                'ext': dl.get('ext'),
+                'vcodec': dl.get('vcodec'),
+                'acodec': dl.get('acodec'),
+                'width': dl.get('width'),
+                'height': dl.get('height'),
+                'size': size,
+                'sizeIsEstimate': estimate,
+            })
         merge = None
-        if native_merge and len(downloads) == 2:
-            video = next((d for d in downloads if (d['vcodec'] or '').startswith('avc1')), None)
-            audio = next((d for d in downloads if (d['acodec'] or '').startswith('mp4a')), None)
+        if native_merge and not simulate and len(files) == 2:
+            video = next((f for f in files if (f['vcodec'] or '').startswith('avc1')), None)
+            audio = next((f for f in files if (f['acodec'] or '').startswith('mp4a')), None)
             if video and audio and video is not audio:
                 merge = {'video': video['path'], 'audio': audio['path']}
-        items.append({'id': entry.get('id'), 'title': entry.get('title'), 'files': downloads, 'merge': merge})
+        subtitles = [
+            {'language': lang, 'ext': sub.get('ext'), 'path': sub.get('filepath')}
+            for lang, sub in (entry.get('requested_subtitles') or {}).items()
+            if simulate or sub.get('filepath')]
+        thumbnails = [t['filepath'] for t in entry.get('thumbnails') or [] if t.get('filepath')]
+        sizes = [f['size'] for f in files]
+        items.append({
+            'id': entry.get('id'),
+            'title': entry.get('title'),
+            'duration': entry.get('duration'),
+            'extractor': entry.get('extractor_key'),
+            'webpageUrl': entry.get('webpage_url'),
+            'files': files,
+            'merge': merge,
+            'subtitles': subtitles,
+            'thumbnails': thumbnails,
+            'size': None if None in sizes else sum(sizes),
+            'sizeIsEstimate': None in sizes or any(f['sizeIsEstimate'] for f in files),
+        })
     return items
 
 
@@ -180,16 +220,24 @@ class RecordingYoutubeDL(yt_dlp.YoutubeDL):
         return super().trouble(message, tb, is_error)
 
 
-_report_retry = FileDownloader.report_retry
+def _hook_download_give_ups():
+    # Private yt-dlp API: if a future release moves it, media-download failures just stop
+    # being retried here (yt-dlp's own retries still apply); tests will flag it.
+    try:
+        from yt_dlp.downloader.common import FileDownloader
+        report_retry = FileDownloader.report_retry
+    except (ImportError, AttributeError):
+        return
+
+    def recording_report_retry(self, err, count, retries, *args, **kwargs):
+        if count > retries and hasattr(self.ydl, 'download_give_ups'):
+            self.ydl.download_give_ups.append(err)
+        return report_retry(self, err, count, retries, *args, **kwargs)
+
+    FileDownloader.report_retry = recording_report_retry
 
 
-def _recording_report_retry(self, err, count, retries, *args, **kwargs):
-    if count > retries and hasattr(self.ydl, 'download_give_ups'):
-        self.ydl.download_give_ups.append(err)
-    return _report_retry(self, err, count, retries, *args, **kwargs)
-
-
-FileDownloader.report_retry = _recording_report_retry
+_hook_download_give_ups()
 
 
 def with_retries(ydl, retries, action, on_retry=None):
@@ -251,11 +299,13 @@ def main(argv):
             print(json.dumps(ydl.sanitize_info(info)), flush=True)
             return ydl._download_retcode
 
+        simulate, skip_media = bool(opts.get('simulate')), bool(opts.get('skip_download'))
         items = []
         for url in parsed.urls:
             info = with_retries(ydl, retries, lambda: ydl.extract_info(url, download=True), on_retry)
             if info:
-                items += result_items(ydl.sanitize_info(info), native_merge)
+                items += result_items(ydl.sanitize_info(info), native_merge,
+                                      simulate=simulate, skip_media=skip_media)
         emit('result', items=items)
         return ydl._download_retcode
 

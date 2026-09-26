@@ -15,11 +15,11 @@
 # Usage: scripts/build_ffmpeg_android.sh [abi...]    (default: arm64-v8a x86_64)
 set -euo pipefail
 
-FFMPEG_VERSION=8.1.3
-FFMPEG_SHA256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
 API=24
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Version and checksum come from runtime-versions.json (updated by scripts/update_deps.py).
+read -r FFMPEG_VERSION FFMPEG_SHA256 < <(python3 -c "import json; p = json.load(open('$ROOT/runtime-versions.json'))['ffmpeg']; print(p['version'], p['sha256'])")
 CACHE="$ROOT/.cache"
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
 if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then

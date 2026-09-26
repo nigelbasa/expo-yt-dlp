@@ -21,6 +21,10 @@ class DownloadOptions : Record {
   @Field val cookiesFile: String? = null
   @Field val extraArgs: List<String> = emptyList()
   @Field val networkRetries: Int = 3
+  /** Resolve formats, sizes and file names without downloading (yt-dlp --simulate). */
+  @Field val simulate: Boolean = false
+  /** Only write side files such as subtitles and thumbnails (yt-dlp --skip-download). */
+  @Field val skipMedia: Boolean = false
 }
 
 internal class YtDlpException(message: String) : CodedException("ERR_YTDLP", message, null)

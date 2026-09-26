@@ -43,30 +43,26 @@ import zipfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Pinned inputs. Bump these together, then re-run scripts/host_smoke_test.py.
+# Pinned inputs live in runtime-versions.json (see scripts/update_deps.py).
 # ---------------------------------------------------------------------------
 
-PYTHON_VERSION = '3.14.7'
-PY_MINOR = '3.14'
-PYTHON_ANDROID = {
-    # abi: (python.org triplet, sha256 of the release tarball)
-    'arm64-v8a': ('aarch64-linux-android', '6d50cc3aa66e414a439594089bcdfb5f1264358155c70c1f00471c24cfb477fb'),
-    'x86_64': ('x86_64-linux-android', '2c16ce2359565cd8c24f86cfb75630768ba6607e732946b294b969797f583b60'),
-}
+ROOT = Path(__file__).resolve().parent.parent
+PINS = json.loads((ROOT / 'runtime-versions.json').read_text(encoding='utf-8'))
+
+PYTHON_VERSION = PINS['python']['version']
+PY_MINOR = '.'.join(PYTHON_VERSION.split('.')[:2])
+TRIPLETS = {'arm64-v8a': 'aarch64-linux-android', 'x86_64': 'x86_64-linux-android'}
+PYTHON_ANDROID = {abi: (TRIPLETS[abi], sha) for abi, sha in PINS['python']['sha256'].items()}
 ANDROID_API = 24  # same minimum as the python.org build
 
-WHEELS = {
-    # PyPI name: (version, sha256 of the py3-none-any wheel)
-    'yt-dlp': ('2026.8.19', '1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf'),
-    # Must match the `yt-dlp-ejs==` pin in yt-dlp's own metadata.
-    'yt-dlp-ejs': ('0.8.0', '79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4'),
-    'certifi': ('2026.7.22', '62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775'),
-}
+# PyPI name -> (version, sha256 of the py3-none-any wheel). yt-dlp-ejs must match the
+# `yt-dlp-ejs==` pin in yt-dlp's own metadata (checked below).
+WHEELS = {name: (w['version'], w['sha256']) for name, w in PINS['wheels'].items()}
 
-QUICKJS_NG = ('0.17.0', '559bc4c420475e55c7ab4510adbc562f55d7524d75e8e89d79ce4bb02f5687d9')
+QUICKJS_NG = (PINS['quickjs-ng']['version'], PINS['quickjs-ng']['sha256'])
 
 # yt-dlp extractor modules to keep (yt_dlp/extractor/<name>.py or <name>/ package).
-EXTRACTORS = ['youtube', 'facebook', 'instagram']
+EXTRACTORS = PINS['extractors']
 # Always kept: GenericIE is registered unconditionally as the fallback, and it finds plain
 # <video>/<audio> tags through the embed extractors in genericembeds (HTML5MediaEmbedIE,
 # QuotedHTMLIE), which it only sees if they are registered.
@@ -92,7 +88,6 @@ LIB_DYNLOAD_REMOVE = re.compile(
 # Native libraries from the python.org prefix/lib that go into jniLibs.
 PYTHON_SHARED_LIBS = [f'libpython{PY_MINOR}.so', 'libssl_python.so', 'libcrypto_python.so']
 
-ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / '.cache'
 JNI_LIBS = ROOT / 'android' / 'src' / 'main' / 'jniLibs'
 ASSETS = ROOT / 'android' / 'src' / 'main' / 'assets' / 'expo-yt-dlp'
