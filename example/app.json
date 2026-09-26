@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "my-module-example",
-    "slug": "my-module-example",
+    "name": "expo-yt-dlp-example",
+    "slug": "expo-yt-dlp-example",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -22,6 +22,17 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "../app.plugin.js",
+        {
+          "abiFilters": [
+            "arm64-v8a",
+            "x86_64"
+          ]
+        }
+      ]
+    ]
   }
 }

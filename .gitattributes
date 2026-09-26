@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jar binary
+*.keystore binary
+*.so binary
+*.zip binary

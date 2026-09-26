@@ -1,0 +1,47 @@
+# Builds the Android runtime (Python, trimmed yt-dlp, QuickJS, mux-only ffmpeg) and uploads
+# it as an artifact. Not yet run; expect to adjust action versions and runner paths.
+name: Android runtime
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ffmpeg
+          key: ffmpeg-${{ hashFiles('scripts/build_ffmpeg_android.sh') }}
+
+      # ANDROID_NDK_LATEST_HOME is a runner machine variable, so it's read in the shell
+      # (the `env` expression context only sees workflow-defined variables).
+      - name: Build ffmpeg
+        run: |
+          if [ ! -f .cache/ffmpeg/arm64-v8a/ffmpeg ] || [ ! -f .cache/ffmpeg/x86_64/ffmpeg ]; then
+            ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" bash scripts/build_ffmpeg_android.sh
+          fi
+
+      - name: Build runtime
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" python scripts/build_android_runtime.py
+
+      - name: Host smoke test
+        run: python scripts/host_smoke_test.py -- --list-extractors
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-runtime
+          path: |
+            android/src/main/jniLibs
+            android/src/main/assets/expo-yt-dlp

@@ -1,9 +1,25 @@
-import { NativeModule, requireNativeModule } from 'expo';
+import { NativeModule, requireOptionalNativeModule } from 'expo';
 
-import { ExpoYtDlpModuleEvents } from './ExpoYtDlp.types';
+import {
+  DownloadOptions,
+  DownloadResult,
+  ExecResult,
+  ExpoYtDlpModuleEvents,
+  InfoOptions,
+  RuntimeInfo,
+} from './ExpoYtDlp.types';
+
+export type NativeInfoOptions = Omit<InfoOptions, 'signal'>;
+export type NativeDownloadOptions = Omit<DownloadOptions, 'onProgress'>;
 
 declare class ExpoYtDlpModule extends NativeModule<ExpoYtDlpModuleEvents> {
-  setValueAsync(value: string): Promise<void>;
+  isSupported(): boolean;
+  prepare(): Promise<RuntimeInfo>;
+  getInfo(id: string, url: string, options: NativeInfoOptions): Promise<string>;
+  download(id: string, url: string, options: NativeDownloadOptions): Promise<DownloadResult>;
+  exec(id: string, args: string[]): Promise<ExecResult>;
+  cancel(id: string): boolean;
 }
 
-export default requireNativeModule<ExpoYtDlpModule>('ExpoYtDlp');
+// Android only for now; null on iOS and web.
+export default requireOptionalNativeModule<ExpoYtDlpModule>('ExpoYtDlp');

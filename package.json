@@ -1,5 +1,5 @@
 {
-  "name": "my-module",
+  "name": "expo-yt-dlp",
   "version": "0.1.0",
   "description": "yt-dlp for Expo / React Native apps, with a bundled stripped-down CPython runtime (Android first)",
   "main": "build/index.js",
@@ -11,35 +11,41 @@
     "test": "node internal/module_scripts/test.js",
     "prepare": "node internal/module_scripts/prepare.js",
     "open:ios": "node internal/module_scripts/open-ios.js",
-    "open:android": "node internal/module_scripts/open-android.js"
+    "open:android": "node internal/module_scripts/open-android.js",
+    "build:runtime": "python scripts/build_android_runtime.py",
+    "smoke:host": "python scripts/host_smoke_test.py -- --list-extractors",
+    "prepublishOnly": "node -e \"require('fs').accessSync('android/src/main/assets/expo-yt-dlp/manifest.json')\" || (echo 'Run npm run build:runtime first' && exit 1)"
   },
   "keywords": [
     "react-native",
     "expo",
-    "my-module",
+    "expo-yt-dlp",
+    "yt-dlp",
+    "youtube-dl",
     "ExpoYtDlp"
   ],
-  "repository": "https://github.com/nigelbasa/my-module",
+  "repository": "https://github.com/nigelbasa/expo-yt-dlp",
   "bugs": {
-    "url": "https://github.com/nigelbasa/my-module/issues"
+    "url": "https://github.com/nigelbasa/expo-yt-dlp/issues"
   },
   "author": "expo-yt-dlp contributors <nigelbasarokwe@gmail.com> (https://github.com/nigelbasa)",
   "license": "MIT",
-  "homepage": "https://github.com/nigelbasa/my-module#readme",
+  "homepage": "https://github.com/nigelbasa/expo-yt-dlp#readme",
   "dependencies": {},
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@types/jest": "^29.2.1",
-    "@types/react": "~19.1.1",
-    "babel-preset-expo": "~55.0.8",
+    "@types/react": "~19.2.2",
+    "babel-preset-expo": "~57.0.13",
     "eslint": "~9.39.4",
     "eslint-config-universe": "^15.0.3",
     "expo": "^57.0.25",
     "jest": "^29.7.0",
-    "jest-expo": "~55.0.9",
+    "jest-expo": "~57.0.5",
     "prettier": "^3.0.0",
-    "react-native": "0.82.1",
-    "typescript": "^5.9.2"
+    "react-native": "0.86.3",
+    "typescript": "^5.9.2",
+    "react": "19.2.3"
   },
   "jest": {
     "preset": "jest-expo",

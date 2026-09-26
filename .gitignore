@@ -55,3 +55,9 @@ yarn-error.log
 
 # Expo
 .expo/*
+
+# expo-yt-dlp: build cache and generated runtime (rebuilt by `npm run build:runtime`,
+# shipped in the npm tarball, not committed)
+.cache/
+android/src/main/jniLibs/
+android/src/main/assets/expo-yt-dlp/
