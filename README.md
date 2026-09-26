@@ -217,13 +217,13 @@ async function pickQuality(url: string) {
   // e.g. [{ formatId: '137', resolution: '1920x1080', size: 48_000_000, ... }, ...]
   const chosen = choices[0];
   // Video-only formats have no sound: combine with the best audio using yt-dlp syntax.
-  return YtDlp.download(url, { format: `${chosen.formatId}+bestaudio[ext=m4a]/${chosen.formatId}` })
-    .promise;
+  return YtDlp.download(url, { format: `${chosen.formatId}+bestaudio[ext=m4a]` }).promise;
 }
 ```
 
-Without a bundled ffmpeg, a `+` selector falls back to the part after `/`. Use `maxHeight`
-instead to get merged files through the built-in merger.
+Without a bundled ffmpeg, a `+` combination is merged on the device when Android's
+`MediaMuxer` supports the pair: H.264 + AAC into `.mp4`, or VP8/VP9 + Opus/Vorbis into
+`.webm`. Other pairs, such as VP9 + AAC, come back as two files: the video and the audio.
 
 ### Audio only
 

@@ -95,13 +95,25 @@ def main() -> None:
                    else r.stderr.strip()[-200:])
 
             if real:
-                r = runner(['--native-merge', '--max-res', '720'], template, url)
+                # Same templates and side-file options as the module's native-merge download.
+                name_t = '%(title).50B [%(id)s]'
+                side = ['-o', f'{name_t}.f%(format_id)s.%(ext)s', '-o', f'subtitle:{name_t}.%(ext)s',
+                        '-o', f'thumbnail:{name_t}.%(ext)s', '--write-subs', '--write-auto-subs',
+                        '--sub-langs', 'en', '--write-thumbnail']
+                r = runner(['--native-merge', '--max-res', '720'], side, url)
                 res = result(r)
-                files = [f['path'] for it in (res or {}).get('items', []) for f in it['files']]
-                ok = r.returncode == 0 and files and all(Path(p).exists() for p in files)
+                items = (res or {}).get('items', [])
+                files = [f['path'] for it in items for f in it['files']]
+                subs = [s['path'] for it in items for s in it['subtitles']]
+                thumbs = [t for it in items for t in it['thumbnails']]
+                on_disk_subs = list(out.glob('*.vtt'))
+                ok = (r.returncode == 0 and files and all(Path(p).exists() for p in files + subs + thumbs)
+                      and len(subs) == 1 and len(thumbs) == 1 and len(on_disk_subs) == 1)
                 report(f'{name} download', bool(ok),
-                       f'{len(files)} files, {sum(Path(p).stat().st_size for p in files)} bytes' if ok
-                       else r.stderr.strip()[-200:])
+                       f'{len(files)} media files, subtitles {[Path(p).name for p in subs]}, '
+                       f'{len(thumbs)} thumbnail' if ok else
+                       f'exit {r.returncode}, subs={subs}, thumbs={thumbs}, vtt on disk={on_disk_subs} '
+                       f'{r.stderr.strip()[-200:]}')
     sys.exit(1 if failures else 0)
 
 

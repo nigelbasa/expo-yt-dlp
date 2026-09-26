@@ -109,11 +109,15 @@ class ExpoYtDlpModule : Module() {
     }
     moduleArgs += "--"
 
-    val args = mutableListOf(
-      "-P", outputDir.path,
-      "-o", if (nativeMerge) "%(title).150B [%(id)s].f%(format_id)s.%(ext)s" else "%(title).150B [%(id)s].%(ext)s",
-      "--no-mtime",
-    )
+    val name = "%(title).150B [%(id)s]"
+    val args = mutableListOf("-P", outputDir.path, "--no-mtime")
+    if (nativeMerge) {
+      // Video and audio are separate downloads, so their names carry the format id until
+      // they're merged. Subtitles/thumbnails would otherwise be written once per format.
+      args += listOf("-o", "$name.f%(format_id)s.%(ext)s", "-o", "subtitle:$name.%(ext)s", "-o", "thumbnail:$name.%(ext)s")
+    } else {
+      args += listOf("-o", "$name.%(ext)s")
+    }
     when {
       options.format != null -> args += listOf("-f", options.format)
       options.audioOnly -> args += listOf("-f", "ba[ext=m4a]/ba/b")
@@ -178,7 +182,9 @@ class ExpoYtDlpModule : Module() {
     if (result.exitCode != 0) throw YtDlpException(YtDlpProcess.errorMessage(result))
     val reported = items ?: throw YtDlpException("yt-dlp finished without reporting its files")
 
-    val results = List(reported.length()) { finishItem(id, reported.getJSONObject(it), nativeMerge && !options.simulate) }
+    val results = List(reported.length()) {
+      finishItem(id, reported.getJSONObject(it), simulate = options.simulate, tidyNames = nativeMerge)
+    }
     val outputs = results.sumOf { it.files.size + it.subtitleCount + it.thumbnailCount }
     if (!options.simulate && outputs == 0) throw YtDlpException("yt-dlp finished without writing any file")
     return mapOf(
@@ -195,20 +201,22 @@ class ExpoYtDlpModule : Module() {
   }
 
   /**
-   * Muxes a video's native-merge pair (or tidies a lone file's name) and converts the
-   * runner's item for JS.
+   * Muxes the video/audio pair the runner asked for (its native-merge picks, or a `+` format
+   * requested without ffmpeg), tidies a lone native-merge file's name, and converts the item
+   * for JS.
    */
   @Suppress("UNCHECKED_CAST")
-  private fun finishItem(jobId: String, item: JSONObject, nativeMerge: Boolean): FinishedItem {
+  private fun finishItem(jobId: String, item: JSONObject, simulate: Boolean, tidyNames: Boolean): FinishedItem {
     val fields = (item.toJsValue() as Map<String, Any?>).toMutableMap()
     val files = (fields.remove("files") as List<Map<String, Any?>>).toMutableList()
     val merge = fields.remove("merge") as Map<String, Any?>?
-    if (nativeMerge && merge != null) {
+    if (simulate) return FinishedItem(fields, files)
+    if (merge != null) {
       sendEvent(PROGRESS_EVENT, mapOf("id" to jobId, "videoId" to fields["id"], "status" to "merging"))
       val video = files.first { it["path"] == merge["video"] }
       val audio = files.first { it["path"] == merge["audio"] }
       val videoPath = video["path"] as String
-      val merged = File(FORMAT_ID_SUFFIX.replace(videoPath, "") + ".mp4")
+      val merged = File(merge["output"] as String)
       NativeMuxer.merge(videoPath, audio["path"] as String, merged.path)
       File(videoPath).delete()
       File(audio["path"] as String).delete()
@@ -216,14 +224,14 @@ class ExpoYtDlpModule : Module() {
       files += video + mapOf(
         "path" to merged.path,
         "formatId" to "${video["formatId"]}+${audio["formatId"]}",
-        "ext" to "mp4",
+        "ext" to merged.extension,
         "acodec" to audio["acodec"],
         "size" to merged.length().toDouble(),
         "sizeIsEstimate" to false,
       )
       fields["size"] = merged.length().toDouble()
       fields["sizeIsEstimate"] = false
-    } else if (nativeMerge && files.size == 1) {
+    } else if (tidyNames && files.size == 1) {
       files[0] = files[0] + ("path" to stripFormatId(files[0]["path"] as String))
     }
     return FinishedItem(fields, files)

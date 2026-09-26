@@ -24,6 +24,7 @@ silently returning only one half of a pair.
 """
 import http.client
 import json
+import os
 import ssl
 import sys
 import time
@@ -113,6 +114,64 @@ def format_size(fmt):
     return sum(sizes), any(not p.get('filesize') for p in parts)
 
 
+def side_file(path, files, simulate):
+    """Where a subtitle/thumbnail actually is.
+
+    With native merging the media template is "<name>.f<format_id>.<ext>" and the module adds
+    "subtitle:"/"thumbnail:" templates without the format id, so each side file is written
+    once as "<name>.<lang>.vtt" / "<name>.webp". yt-dlp still reports the path derived from
+    the last format ("<name>.f140.en.vtt"), so map it back using the known media files.
+    """
+    if not path or simulate or os.path.exists(path):
+        return path
+    for f in files:
+        tail = f'.f{f["formatId"]}.{f["ext"]}'
+        if f['formatId'] and f['ext'] and f['path'].endswith(tail):
+            prefix = f['path'][:-len(tail)] + f'.f{f["formatId"]}'
+            if path.startswith(prefix):
+                candidate = f['path'][:-len(tail)] + path[len(prefix):]
+                if os.path.exists(candidate):
+                    return candidate
+    return path
+
+
+def file_entry(fmt, path):
+    size, estimate = format_size(fmt)
+    return {
+        'path': path,
+        'formatId': fmt.get('format_id'),
+        'ext': fmt.get('ext'),
+        'vcodec': fmt.get('vcodec'),
+        'acodec': fmt.get('acodec'),
+        'width': fmt.get('width'),
+        'height': fmt.get('height'),
+        'size': size,
+        'sizeIsEstimate': estimate,
+    }
+
+
+def mux_container(video, audio):
+    """Container Android's MediaMuxer can write this video+audio pair into, or None."""
+    vcodec, acodec = video['vcodec'] or '', audio['acodec'] or ''
+    if vcodec.startswith('avc1') and acodec.startswith('mp4a'):
+        return 'mp4'
+    if vcodec.startswith(('vp8', 'vp9', 'vp09')) and acodec.startswith(('opus', 'vorbis')):
+        return 'webm'
+    return None
+
+
+def merge_plan(files):
+    """{'video', 'audio', 'output'} when files are a video-only + audio-only pair MediaMuxer
+    can combine. Parts are named "<name>.f<format_id>.<ext>"; the result is "<name>.<container>"."""
+    video = next((f for f in files if f['vcodec'] not in (None, 'none') and f['acodec'] == 'none'), None)
+    audio = next((f for f in files if f['acodec'] not in (None, 'none') and f['vcodec'] == 'none'), None)
+    container = video and audio and mux_container(video, audio)
+    tail = video and f'.f{video["formatId"]}.{video["ext"]}'
+    if not container or not video['path'].endswith(tail):
+        return None
+    return {'video': video['path'], 'audio': audio['path'], 'output': f'{video["path"][:-len(tail)]}.{container}'}
+
+
 def result_items(info, native_merge, *, simulate=False, skip_media=False):
     """Per-video results: media files (or, when simulating, the files that would be written),
     subtitle and thumbnail files, sizes, and which video/audio pair to mux natively."""
@@ -121,35 +180,28 @@ def result_items(info, native_merge, *, simulate=False, skip_media=False):
     for entry in entries or []:
         if not entry:
             continue
-        files = []
+        files, needs_merge = [], native_merge
         # With --skip-download yt-dlp still reports the media path it would have used.
         for dl in [] if skip_media else entry.get('requested_downloads') or []:
             path = dl.get('filepath') or (dl.get('filename') if simulate else None)
             if not path:
                 continue
-            size, estimate = format_size(dl)
-            files.append({
-                'path': path,
-                'formatId': dl.get('format_id'),
-                'ext': dl.get('ext'),
-                'vcodec': dl.get('vcodec'),
-                'acodec': dl.get('acodec'),
-                'width': dl.get('width'),
-                'height': dl.get('height'),
-                'size': size,
-                'sizeIsEstimate': estimate,
-            })
-        merge = None
-        if native_merge and not simulate and len(files) == 2:
-            video = next((f for f in files if (f['vcodec'] or '').startswith('avc1')), None)
-            audio = next((f for f in files if (f['acodec'] or '').startswith('mp4a')), None)
-            if video and audio and video is not audio:
-                merge = {'video': video['path'], 'audio': audio['path']}
+            parts = dl.get('requested_formats') or []
+            if parts and not simulate and not os.path.exists(path):
+                # A merge was requested (e.g. format '137+140') but there is no ffmpeg:
+                # yt-dlp downloaded the parts separately and never wrote `path`.
+                files += [file_entry(p, p['filepath']) for p in parts
+                          if p.get('filepath') and os.path.exists(p['filepath'])]
+                needs_merge = True
+                continue
+            files.append(file_entry(dl, path))
+        merge = merge_plan(files) if needs_merge and not simulate and len(files) == 2 else None
         subtitles = [
-            {'language': lang, 'ext': sub.get('ext'), 'path': sub.get('filepath')}
+            {'language': lang, 'ext': sub.get('ext'), 'path': side_file(sub.get('filepath'), files, simulate)}
             for lang, sub in (entry.get('requested_subtitles') or {}).items()
             if simulate or sub.get('filepath')]
-        thumbnails = [t['filepath'] for t in entry.get('thumbnails') or [] if t.get('filepath')]
+        thumbnails = [side_file(t['filepath'], files, simulate)
+                      for t in entry.get('thumbnails') or [] if t.get('filepath')]
         sizes = [f['size'] for f in files]
         items.append({
             'id': entry.get('id'),
