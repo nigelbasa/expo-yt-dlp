@@ -27,7 +27,10 @@
     "youtube-dl",
     "ExpoYtDlp"
   ],
-  "repository": "https://github.com/nigelbasa/expo-yt-dlp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nigelbasa/expo-yt-dlp.git"
+  },
   "bugs": {
     "url": "https://github.com/nigelbasa/expo-yt-dlp/issues"
   },

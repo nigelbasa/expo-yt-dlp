@@ -273,6 +273,25 @@ async function playlists() {
 }
 ```
 
+YouTube **Mixes** (the auto-generated "radio" playlists) work through the watch URL that
+YouTube gives you, `watch?v=ID&list=RD…`. They can run to dozens of songs, so always pass a
+`limit` or `playlistItems`. Not every video has a Mix, and in that case you get the single
+video back. A bare `playlist?list=RD…` URL doesn't work, because YouTube refuses to show
+Mixes that way.
+
+```ts
+import * as YtDlp from 'expo-yt-dlp';
+
+async function mix(videoId: string) {
+  const url = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
+  const radio = await YtDlp.getPlaylist(url, { limit: 25 });
+  console.log(radio.title, radio.entries.map((e) => e.title));
+
+  // Plain download(url) fetches only the video; opt into the playlist to take songs from it
+  await YtDlp.download(url, { audioOnly: true, playlistItems: '1:10' }).promise;
+}
+```
+
 ### Batches
 
 ```ts
@@ -435,7 +454,7 @@ ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMux
 | --- | --- | --- |
 | **CI** (`ci.yml`) | Every push to `main`, every PR | Lint, types, unit tests; full runtime build on Linux with offline tests; checks the npm tarball's contents; on PRs, also a Gradle build of the example app. |
 | **Update bundled yt-dlp** (`update-deps.yml`) | Mondays, or manually (stable/nightly) | `deps:update` plus tests, then a PR with the new pins. Needs *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. |
-| **Release** (`release.yml`) | Pushing a `v*` tag | Builds the runtime, runs the tests, publishes to npm (needs an `NPM_TOKEN` secret), creates a GitHub release listing the bundled versions. |
+| **Release** (`release.yml`) | Pushing a `v*` tag | Builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions. |
 
 ### Releasing
 
@@ -443,6 +462,31 @@ ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMux
 npm version patch          # or minor/major
 git push --follow-tags     # the Release workflow builds and publishes
 ```
+
+Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers): npm
+trusts `release.yml` in this repository, so no npm token is stored in GitHub. npm only lets
+you set that up for a package that already exists, so the very first version is published
+by hand, once:
+
+1. Turn on two-factor authentication for your npm account.
+2. Build and publish from a clean checkout:
+   ```sh
+   npm login
+   npm ci
+   npm run build:runtime      # both ABIs
+   npm run build
+   npm pack --dry-run         # check the file list and size
+   npm publish --access public
+   ```
+3. On npmjs.com, open the package's **Settings → Trusted publishing**, choose GitHub Actions
+   and enter owner `nigelbasa`, repository `expo-yt-dlp`, workflow `release.yml`, and leave
+   the environment empty.
+4. Optionally, under **Publishing access**, require 2FA and disallow tokens, so only the
+   workflow can publish.
+
+After that, every tag is published by the workflow. Provenance statements need a public
+source repository; add `--provenance` to the publish step in `release.yml` once the repo is
+public.
 
 ## Limitations
 

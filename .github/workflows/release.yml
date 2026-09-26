@@ -1,6 +1,8 @@
 # Publishes to npm when a version tag is pushed:
 #   npm version patch && git push --follow-tags
-# Needs an npm automation token in the repo secret NPM_TOKEN.
+# Uses npm trusted publishing (OIDC), so no npm token is stored in the repo. On npmjs.com,
+# the package's Settings -> Trusted publishing must list GitHub Actions with owner nigelbasa,
+# repository expo-yt-dlp, workflow release.yml and no environment.
 name: Release
 
 on:
@@ -14,7 +16,8 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: write  # GitHub release
+  id-token: write  # npm trusted publishing
 
 jobs:
   publish:
@@ -23,8 +26,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: npm with trusted publishing (11.5.1+)
+        run: npm install -g npm@^11.5.1 && npm --version
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
@@ -53,8 +58,6 @@ jobs:
 
       # Add --provenance once the repository is public (npm requires a public source repo).
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: GitHub release
         if: startsWith(github.ref, 'refs/tags/')
