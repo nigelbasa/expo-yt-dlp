@@ -1,6 +1,6 @@
 {
   "name": "expo-yt-dlp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "yt-dlp for Expo / React Native apps, with a bundled stripped-down CPython runtime (Android first)",
   "main": "build/index.js",
   "types": "build/index.d.ts",
