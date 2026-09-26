@@ -56,8 +56,8 @@ jobs:
         env:
           CI: 1
 
-      # Add --provenance once the repository is public (npm requires a public source repo).
-      - run: npm publish --access public
+      # --provenance links each version to this workflow run and commit (needs a public repo).
+      - run: npm publish --access public --provenance
 
       - name: GitHub release
         if: startsWith(github.ref, 'refs/tags/')

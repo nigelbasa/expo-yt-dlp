@@ -484,9 +484,9 @@ by hand, once:
 4. Optionally, under **Publishing access**, require 2FA and disallow tokens, so only the
    workflow can publish.
 
-After that, every tag is published by the workflow. Provenance statements need a public
-source repository; add `--provenance` to the publish step in `release.yml` once the repo is
-public.
+After that, every tag is published by the workflow, with a
+[provenance statement](https://docs.npmjs.com/generating-provenance-statements) that links
+the version on npm to the commit and workflow run that built it.
 
 ## Limitations
 
