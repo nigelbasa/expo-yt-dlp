@@ -428,9 +428,12 @@ def build_jnilibs(abi: str, prefix: Path, tc: Toolchain | None, ffmpeg_dir: Path
 
     for name in PYTHON_SHARED_LIBS:
         shutil.copy2(prefix / 'lib' / name, out / name)
-    # CPython's own license. OpenSSL (Apache-2.0) ships no license file in the release;
-    # apps should list it in their third-party notices.
+    # CPython's own license. The release doesn't ship the licenses of the libraries it
+    # links (OpenSSL 3.5, libffi, xz 5.4, bzip2 1.0.8), so those are kept in the repo.
+    # Check them when the Python pin moves to a release with different library versions.
     add_license('cpython', prefix / 'lib' / f'python{PY_MINOR}' / 'LICENSE.txt')
+    for text in sorted((ROOT / 'native' / 'third-party-licenses').glob('*.txt')):
+        add_license(text.stem, text)
 
     ext_modules = []
     ext_suffix = None

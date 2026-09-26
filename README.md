@@ -511,6 +511,7 @@ MIT for this package. Bundled components:
 - yt-dlp: Unlicense
 - CPython: PSF-2.0
 - OpenSSL: Apache-2.0
+- libffi: MIT; xz (liblzma): public domain; bzip2: BSD-style (all linked into CPython)
 - QuickJS-ng: MIT
 - certifi: MPL-2.0
 - yt-dlp-ejs: Unlicense, MIT and ISC
