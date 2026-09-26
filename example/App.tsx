@@ -30,7 +30,9 @@ export default function App() {
     append(`${label}...`);
     try {
       const result = await fn();
-      append(`${label} ok in ${((Date.now() - started) / 1000).toFixed(1)}s: ${JSON.stringify(result)}`);
+      append(
+        `${label} ok in ${((Date.now() - started) / 1000).toFixed(1)}s: ${JSON.stringify(result)}`
+      );
     } catch (e: any) {
       append(`${label} failed [${e.code ?? 'error'}]: ${e.message}`);
     }
@@ -53,7 +55,11 @@ export default function App() {
               onPress={() =>
                 run('getInfo', async () => {
                   const info = await YtDlp.getInfo(url);
-                  return { title: info.title, extractor: info.extractor, formats: info.formats?.length };
+                  return {
+                    title: info.title,
+                    extractor: info.extractor,
+                    formats: info.formats?.length,
+                  };
                 })
               }
             />
@@ -72,7 +78,10 @@ export default function App() {
               onPress={() =>
                 run('estimate', async () => {
                   const plan = await YtDlp.estimateDownload(url, { maxHeight: 720 });
-                  return { total: mb(plan.totalSize), files: plan.items[0]?.files.map((f) => f.formatId) };
+                  return {
+                    total: mb(plan.totalSize),
+                    files: plan.items[0]?.files.map((f) => f.formatId),
+                  };
                 })
               }
             />
@@ -88,7 +97,11 @@ export default function App() {
             />
             <Button
               title="Audio"
-              onPress={() => run('audio', () => YtDlp.download(url, { audioOnly: true }).promise.then((r) => r.files))}
+              onPress={() =>
+                run('audio', () =>
+                  YtDlp.download(url, { audioOnly: true }).promise.then((r) => r.files)
+                )
+              }
             />
             <Button title="Cancel" onPress={() => task.current?.cancel()} />
           </Row>
@@ -98,8 +111,19 @@ export default function App() {
               onPress={() =>
                 run('subtitles', async () => {
                   const result = await YtDlp.downloadSubtitles(url, { languages: ['en'] }).promise;
-                  return result.items.flatMap((i) => i.subtitles.map((s) => `${s.language}.${s.ext}`));
+                  return result.items.flatMap((i) =>
+                    i.subtitles.map((s) => `${s.language}.${s.ext}`)
+                  );
                 })
+              }
+            />
+            <Button
+              title="Thumbnail"
+              onPress={() =>
+                run(
+                  'thumbnail',
+                  async () => (await YtDlp.downloadThumbnail(url).promise).items[0]?.thumbnails
+                )
               }
             />
             <Button
@@ -116,7 +140,8 @@ export default function App() {
                 const batch = YtDlp.downloadBatch(BATCH_URLS, {
                   concurrency: 2,
                   maxHeight: 480,
-                  onItemDone: (r, i) => append(`batch item ${i}: ${r.ok ? 'ok' : `failed: ${r.error.message}`}`),
+                  onItemDone: (r, i) =>
+                    append(`batch item ${i}: ${r.ok ? 'ok' : `failed: ${r.error.message}`}`),
                 });
                 task.current = batch;
                 run('batch', async () => (await batch.promise).map((r) => r.ok));
