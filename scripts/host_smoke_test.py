@@ -33,10 +33,11 @@ CACHE = ROOT / '.cache'
 HOST_ONLY = {'nt', 'winreg', '_winapi', 'msvcrt', '_overlapped', '_wmi', 'winsound', '_msi',
              '_scproxy', '_osx_support'}
 FROZEN = {'_frozen_importlib', '_frozen_importlib_external', 'zipimport'}
-# Stripped on purpose; every importer wraps them in try/except ImportError
-# (yt_dlp.dependencies, uuid, shutil, zipfile, concurrent.futures).
+# Stripped on purpose or absent from the Android build; every importer wraps them in
+# try/except ImportError (yt_dlp.dependencies, uuid, shutil, zipfile, concurrent.futures,
+# pathlib/tarfile for grp, which Linux hosts import and Android doesn't have).
 OPTIONAL = {'sqlite3', 'sqlite3.dbapi2', '_sqlite3', '_uuid', '_interpreters',
-            'compression.zstd', 'compression.zstd._zstdfile', '_zstd'}
+            'compression.zstd', 'compression.zstd._zstdfile', '_zstd', 'grp'}
 
 # Records every module yt-dlp imported under its real name (skipping aliases such as
 # os.path -> ntpath, whose spec name differs from the sys.modules key).

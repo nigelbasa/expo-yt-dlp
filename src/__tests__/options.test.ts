@@ -15,14 +15,19 @@ describe('downloadArgs', () => {
   });
 
   it('maps subtitle options', () => {
-    expect(downloadArgs({ subtitles: { languages: ['en', 'es'], auto: false, format: 'vtt' } })).toEqual(
-      ['--write-subs', '--sub-langs', 'en,es', '--sub-format', 'vtt']
-    );
+    expect(
+      downloadArgs({ subtitles: { languages: ['en', 'es'], auto: false, format: 'vtt' } })
+    ).toEqual(['--write-subs', '--sub-langs', 'en,es', '--sub-format', 'vtt']);
   });
 
   it('maps playlist range, rate limit and thumbnail, with extraArgs last', () => {
     expect(
-      downloadArgs({ playlistItems: '1:5', rateLimit: '2M', thumbnail: true, extraArgs: ['-r', '1M'] })
+      downloadArgs({
+        playlistItems: '1:5',
+        rateLimit: '2M',
+        thumbnail: true,
+        extraArgs: ['-r', '1M'],
+      })
     ).toEqual(['-I', '1:5', '-r', '2M', '--write-thumbnail', '-r', '1M']);
   });
 });

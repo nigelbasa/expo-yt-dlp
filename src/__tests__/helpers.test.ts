@@ -1,7 +1,13 @@
 import type { VideoInfo } from '../ExpoYtDlp.types';
 import { listSubtitleTracks, summarizeFormats, toPlaylist } from '../helpers';
 
-const base = { id: 'x', title: 'T', extractor: 'youtube', extractor_key: 'Youtube', webpage_url: 'u' };
+const base = {
+  id: 'x',
+  title: 'T',
+  extractor: 'youtube',
+  extractor_key: 'Youtube',
+  webpage_url: 'u',
+};
 
 describe('summarizeFormats', () => {
   const info: VideoInfo = {
@@ -9,8 +15,23 @@ describe('summarizeFormats', () => {
     duration: 100,
     formats: [
       { format_id: 'sb0', ext: 'mhtml', protocol: 'mhtml', vcodec: 'none', acodec: 'none' },
-      { format_id: '140', ext: 'm4a', vcodec: 'none', acodec: 'mp4a.40.2', tbr: 128, filesize: 1_600_000 },
-      { format_id: '137', ext: 'mp4', vcodec: 'avc1.640028', acodec: 'none', width: 1920, height: 1080, tbr: 4000 },
+      {
+        format_id: '140',
+        ext: 'm4a',
+        vcodec: 'none',
+        acodec: 'mp4a.40.2',
+        tbr: 128,
+        filesize: 1_600_000,
+      },
+      {
+        format_id: '137',
+        ext: 'mp4',
+        vcodec: 'avc1.640028',
+        acodec: 'none',
+        width: 1920,
+        height: 1080,
+        tbr: 4000,
+      },
       { format_id: 'hd', ext: 'mp4', vcodec: null, acodec: null, filesize_approx: 9_000_000 },
     ],
   };
@@ -22,8 +43,17 @@ describe('summarizeFormats', () => {
 
   it('uses exact size, then approximate, then bitrate × duration', () => {
     const byId = Object.fromEntries(formats.map((f) => [f.formatId, f]));
-    expect(byId['140']).toMatchObject({ size: 1_600_000, sizeIsEstimate: false, resolution: 'audio only' });
-    expect(byId['hd']).toMatchObject({ size: 9_000_000, sizeIsEstimate: true, hasVideo: null, hasAudio: null });
+    expect(byId['140']).toMatchObject({
+      size: 1_600_000,
+      sizeIsEstimate: false,
+      resolution: 'audio only',
+    });
+    expect(byId['hd']).toMatchObject({
+      size: 9_000_000,
+      sizeIsEstimate: true,
+      hasVideo: null,
+      hasAudio: null,
+    });
     expect(byId['137']).toMatchObject({
       size: 50_000_000,
       sizeIsEstimate: true,
@@ -43,7 +73,12 @@ describe('listSubtitleTracks', () => {
       automatic_captions: { en: [{ ext: 'vtt', url: 'b' }] },
     });
     expect(tracks).toEqual([
-      { language: 'de', name: 'German', automatic: false, formats: [{ ext: 'vtt', url: 'a', name: 'German' }] },
+      {
+        language: 'de',
+        name: 'German',
+        automatic: false,
+        formats: [{ ext: 'vtt', url: 'a', name: 'German' }],
+      },
       { language: 'en', name: null, automatic: true, formats: [{ ext: 'vtt', url: 'b' }] },
     ]);
   });
@@ -56,14 +91,24 @@ describe('toPlaylist', () => {
       _type: 'playlist',
       title: 'Mix',
       entries: [
-        { ...base, id: 'a', title: 'A', webpage_url: undefined as any, url: 'https://y/a', duration: 5, channel: 'C' },
+        {
+          ...base,
+          id: 'a',
+          title: 'A',
+          webpage_url: undefined as any,
+          url: 'https://y/a',
+          duration: 5,
+          channel: 'C',
+        },
       ],
     });
     expect(playlist).toEqual({
       id: 'x',
       title: 'Mix',
       uploader: null,
-      entries: [{ id: 'a', url: 'https://y/a', title: 'A', duration: 5, uploader: 'C', thumbnail: null }],
+      entries: [
+        { id: 'a', url: 'https://y/a', title: 'A', duration: 5, uploader: 'C', thumbnail: null },
+      ],
     });
   });
 
