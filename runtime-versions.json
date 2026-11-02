@@ -9,16 +9,16 @@
   },
   "wheels": {
     "yt-dlp": {
-      "version": "2026.8.19",
-      "sha256": "1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf"
+      "version": "2026.10.26",
+      "sha256": "a05c5b5d8562f7e8a62f5334348b406af4930d56d3a65f8021d14af0e22339ae"
     },
     "yt-dlp-ejs": {
       "version": "0.8.0",
       "sha256": "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4"
     },
     "certifi": {
-      "version": "2026.7.22",
-      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+      "version": "2026.10.23",
+      "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1"
     }
   },
   "quickjs-ng": {
