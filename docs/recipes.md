@@ -162,9 +162,9 @@ async function saveToGallery(url: string) {
 }
 ```
 
-## Logged-in content (Instagram, Facebook)
+## Logged-in content (Instagram, Facebook, Reddit)
 
-Many Instagram and some Facebook posts require a session. Export cookies in Netscape format
+Many Instagram and some Facebook posts require a session, and Reddit always does. Export cookies in Netscape format
 (for example with a "cookies.txt" browser extension), ship or download the file to the device,
 and pass `cookiesFile`:
 

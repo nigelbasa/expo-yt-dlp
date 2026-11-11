@@ -56,7 +56,7 @@ npm run deps:update -- --all                # also Python 3.14.x, QuickJS-ng, ff
 `deps:update` rewrites the pins with verified SHA-256 hashes and rebuilds the runtime,
 re-trimming yt-dlp to the configured extractors. It then runs the offline tests. After it
 succeeds:
-1. Run `npm run test:online` to try the three sites for real.
+1. Run `npm run test:online` to try the sites for real (`npm run test:online -- tiktok` runs one).
 2. Run `npm run build:runtime` for a full native build.
 3. Try the example app on a device.
 4. Bump the version and tag it (see Releasing).

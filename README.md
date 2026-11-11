@@ -11,7 +11,7 @@ the sites you need, and wraps them in a typed JS API. Anything the wrapper doesn
 | | |
 | --- | --- |
 | **Platforms** | Android (arm64-v8a, x86_64). iOS is planned. |
-| **Sites in this build** | YouTube, Facebook, Instagram, plus yt-dlp's generic extractor (pages with plain `<video>` tags) |
+| **Sites in this build** | YouTube, Facebook, Instagram, TikTok, Twitter/X, Reddit and Vimeo (see [Limitations](#limitations) for the last two), plus yt-dlp's generic extractor (pages with plain `<video>` tags) |
 | **Size** | About 11 MB added to a single-ABI APK; about 28 MB on the device once extracted |
 | **Requires** | A development build (`npx expo run:android` or EAS Build). It does not work in Expo Go. |
 
@@ -261,6 +261,9 @@ other functions accepts the same flags.
 - **Without a bundled ffmpeg there's no transcoding.** That means no MP3 conversion and no SRT
   from VTT, and merging needs an H.264 + AAC pair (the best-quality VP9/AV1 streams are
   skipped).
+- **Reddit and Vimeo are restricted.** Reddit only answers a logged-in session, so pass a
+  `cookiesFile`. Vimeo refuses clients that don't look like a browser at the TLS level, which
+  needs a library this build doesn't include, so most Vimeo links fail even with cookies.
 - **Bot checks and rate limits.** YouTube may ask to "confirm you're not a bot", or rate-limit
   subtitle downloads. Those errors aren't retried; cookies from a logged-in session help.
 - **Sites change and yt-dlp follows quickly.** Turn on [updates](#keeping-yt-dlp-up-to-date),

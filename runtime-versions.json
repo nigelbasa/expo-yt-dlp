@@ -33,6 +33,10 @@
   "extractors": [
     "youtube",
     "facebook",
-    "instagram"
+    "instagram",
+    "tiktok",
+    "twitter",
+    "vimeo",
+    "reddit"
   ]
 }
