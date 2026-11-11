@@ -34,3 +34,25 @@ internal class YtDlpCancelledException : CodedException("ERR_YTDLP_CANCELLED", "
 internal class UnsupportedRuntimeException(message: String) : CodedException("ERR_YTDLP_UNSUPPORTED", message, null)
 
 internal class DuplicateJobException(id: String) : CodedException("ERR_YTDLP_DUPLICATE_ID", "A job with id '$id' is already running", null)
+
+class UpdateConfig : Record {
+  /** "bundled" (never update), "auto" (check in the background) or "manual". */
+  @Field val mode: String = "bundled"
+  @Field val checkIntervalHours: Double = 24.0
+  /** A feed other than the official one; needs [feedPublicKey]. */
+  @Field val feedUrl: String? = null
+  @Field val feedPublicKey: String? = null
+}
+
+/** A failed yt-dlp update. Every message is a full sentence an app can show as it is. */
+internal class UpdateException(code: String, message: String) : CodedException(code, message, null) {
+  companion object {
+    const val NETWORK = "ERR_YTDLP_UPDATE_NETWORK"
+    const val SIGNATURE = "ERR_YTDLP_UPDATE_SIGNATURE"
+    const val CORRUPT = "ERR_YTDLP_UPDATE_CORRUPT"
+    const val BROKEN = "ERR_YTDLP_UPDATE_BROKEN"
+    const val BUSY = "ERR_YTDLP_UPDATE_BUSY"
+    const val DISABLED = "ERR_YTDLP_UPDATE_DISABLED"
+    const val CONFIG = "ERR_YTDLP_UPDATE_CONFIG"
+  }
+}

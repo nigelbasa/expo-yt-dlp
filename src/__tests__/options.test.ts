@@ -1,4 +1,9 @@
-import { downloadArgs, toNativeDownloadOptions, toNativeInfoOptions } from '../options';
+import {
+  downloadArgs,
+  toNativeDownloadOptions,
+  toNativeInfoOptions,
+  toNativeUpdateConfig,
+} from '../options';
 
 describe('downloadArgs', () => {
   it('is empty by default', () => {
@@ -63,5 +68,46 @@ describe('toNativeInfoOptions', () => {
       networkRetries: undefined,
       extraArgs: [],
     });
+  });
+});
+
+describe('toNativeUpdateConfig', () => {
+  it('accepts a bare mode and fills the defaults', () => {
+    expect(toNativeUpdateConfig('auto')).toEqual({ mode: 'auto', checkIntervalHours: 24 });
+    expect(toNativeUpdateConfig({ mode: 'bundled' })).toEqual({
+      mode: 'bundled',
+      checkIntervalHours: 24,
+    });
+  });
+
+  it('passes a custom feed and interval through', () => {
+    expect(
+      toNativeUpdateConfig({
+        mode: 'manual',
+        checkIntervalHours: 6,
+        feed: { url: 'https://example.com/feed.json', publicKey: '3059' },
+      })
+    ).toEqual({
+      mode: 'manual',
+      checkIntervalHours: 6,
+      feedUrl: 'https://example.com/feed.json',
+      feedPublicKey: '3059',
+    });
+  });
+
+  it('rejects unknown modes, short intervals and unsafe feeds', () => {
+    expect(() => toNativeUpdateConfig('always' as any)).toThrow(TypeError);
+    expect(() => toNativeUpdateConfig({ mode: 'auto', checkIntervalHours: 0.5 })).toThrow(
+      TypeError
+    );
+    expect(() => toNativeUpdateConfig({ mode: 'auto', checkIntervalHours: NaN })).toThrow(
+      TypeError
+    );
+    expect(() =>
+      toNativeUpdateConfig({ mode: 'auto', feed: { url: 'http://example.com/f', publicKey: 'ab' } })
+    ).toThrow(TypeError);
+    expect(() =>
+      toNativeUpdateConfig({ mode: 'auto', feed: { url: 'https://example.com/f', publicKey: '' } })
+    ).toThrow(TypeError);
   });
 });

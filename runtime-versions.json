@@ -1,5 +1,6 @@
 {
   "$comment": "Pinned inputs of the Android runtime. Edit with `npm run deps:check` / `npm run deps:update` (scripts/update_deps.py), not by hand; the sha256 values are verified on download.",
+  "runtimeApi": 1,
   "python": {
     "version": "3.14.7",
     "sha256": {

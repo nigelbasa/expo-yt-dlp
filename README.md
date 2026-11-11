@@ -90,6 +90,7 @@ Every function takes a URL from any supported site. All options are optional.
 | `getSubtitles(urlOrInfo, options?)` | `Promise<SubtitleTrack[]>` | Uploaded subtitles, then auto-generated captions. |
 | `getPlaylist(url, { limit? })` | `Promise<Playlist>` | Entries of a playlist or channel, without resolving each video. |
 | `search(query, { limit? })` | `Promise<PlaylistEntry[]>` | YouTube search results (default 10). |
+| `getStream(urlOrInfo, options?)` | `Promise<StreamSource>` | A direct link to play the video (or its audio) without saving it. |
 
 `getFormats` and `getSubtitles` also accept an info dict you already fetched, which saves a
 network round trip:
@@ -115,6 +116,29 @@ Options for lookups (`InfoOptions`):
 | `networkRetries` | `3` | Retries after dropped connections, timeouts and 5xx responses. |
 | `extraArgs` | | Any extra yt-dlp CLI arguments. |
 | `signal` | | An `AbortSignal` that cancels the lookup. |
+
+### Streaming without saving
+
+`getStream` returns a direct media link to hand to a player (`expo-video`, a WebView, or
+`Linking.openURL`):
+
+```ts
+const stream = await YtDlp.getStream(url);                       // one URL, picture + sound, up to 720p
+const audio = await YtDlp.getStream(url, { audioOnly: true });   // e.g. for a music player
+player.replace({ uri: stream.url, headers: stream.headers });
+```
+
+| Option | Default | |
+| --- | --- | --- |
+| `maxHeight` | `720` | Tallest video to pick. |
+| `audioOnly` | `false` | Pick an audio stream instead. |
+| `allowSeparate` | `false` | Also allow a video-only link plus a separate audio link (`kind: 'separate'`, `audioUrl` set) when that gives a better picture. Only for players that can play two sources together, such as ExoPlayer's `MergingMediaSource`. |
+
+`stream.kind` is `'single'` (a plain file), `'hls'` (an .m3u8 playlist) or `'separate'`.
+The links expire after a few hours and are tied to the device's connection, so fetch one
+right before playing and don't store it. YouTube's single-file streams stop at 360p; above
+that it offers HLS or separate streams. `getStream` also accepts an info dict you already
+have, and rejects with `ERR_YTDLP_NO_STREAM` when there is nothing playable.
 
 ### Downloading
 
@@ -160,6 +184,87 @@ These are the codecs every phone plays. Options (`DownloadOptions`):
 | `ERR_YTDLP` | yt-dlp failed. The message is yt-dlp's `ERROR:` line (unavailable video, login required, bot check…). |
 | `ERR_YTDLP_CANCELLED` | You called `cancel()`, or an `AbortSignal` fired. Partial files are deleted. |
 | `ERR_YTDLP_UNSUPPORTED` | This device or build can't run the runtime. The message says why (for example, a missing config plugin). |
+
+### Keeping yt-dlp up to date
+
+Sites change, and an old yt-dlp eventually stops working against them. Instead of shipping
+a new app version each time, the app can fetch a newer yt-dlp by itself:
+
+```ts
+import * as YtDlp from 'expo-yt-dlp';
+
+YtDlp.setUpdates('auto'); // once, at startup
+```
+
+| Mode | What it does |
+| --- | --- |
+| `'bundled'` (default) | Only ever uses the yt-dlp shipped inside the app. No update traffic. |
+| `'auto'` | Looks for a newer yt-dlp in the background (at most once a day, and once more right after a yt-dlp failure) and switches to it. Never delays or fails a download. |
+| `'manual'` | Never checks on its own. The app calls `checkForUpdate()` / `updateYtDlp()`. |
+
+The mode is stored on the device, so it can be changed in code at any time, for example
+from a settings screen.
+
+```ts
+// Manual control
+const check = await YtDlp.checkForUpdate();
+// check.status: 'up-to-date' | 'available' | 'app-update-required'
+if (check.status === 'available') {
+  const result = await YtDlp.updateYtDlp({ onProgress: (fraction) => setProgress(fraction) });
+  console.log(`yt-dlp ${result.previous} -> ${result.ytDlp}`);
+}
+
+// Follow what auto mode is doing, and show problems
+const sub = YtDlp.addUpdateListener((event) => {
+  if (event.type === 'updated') toast(`yt-dlp updated to ${event.ytDlp}`);
+  if (event.type === 'failed') console.warn(event.error.code, event.error.message);
+});
+sub.remove();
+
+YtDlp.getUpdateState(); // { mode, current, latest, updateAvailable, lastCheck, lastError }
+await YtDlp.resetToBundled(); // back to the yt-dlp shipped in the app
+```
+
+`setUpdates()` replaces the whole configuration; anything left out returns to its default.
+The full form:
+
+```ts
+YtDlp.setUpdates({
+  mode: 'auto',
+  checkIntervalHours: 12, // default 24, minimum 1
+  feed: { url: 'https://example.com/feed.json', publicKey: '3059…' }, // your own feed
+});
+```
+
+What you should know:
+
+- **Only yt-dlp updates** (with yt-dlp-ejs and the CA certificates). Python, QuickJS and
+  ffmpeg are native code inside the APK and still need an app update. When a new yt-dlp
+  needs a newer version of this package, `checkForUpdate()` reports `'app-update-required'`.
+- **Every update is verified.** The feed is signed and the app only trusts the public keys
+  built into the package (or the one you pass for your own feed). The download must match
+  the size and SHA-256 in that signed feed, old feeds can't be replayed, and the new yt-dlp
+  has to start on the device before it replaces the old one.
+- **It can't leave the app broken.** If anything fails, the yt-dlp in use stays; if a
+  downloaded yt-dlp ever stops starting, the bundled one takes over automatically.
+- **Downloads in progress are not interrupted**; they finish on the version they started with.
+- **Google Play** restricts apps from downloading executable code. Interpreted Python is a
+  grey area there, which is one reason updates are off by default. Decide for your own app.
+- When a call fails with `ERR_YTDLP`, the error has `updateAvailable: true` if a newer
+  yt-dlp is known and `updateYtDlp()` might fix it.
+
+Update errors (rejections of `checkForUpdate()` / `updateYtDlp()`, and `failed` events).
+Each `message` is a full sentence you can show to the user:
+
+| `code` | Meaning |
+| --- | --- |
+| `ERR_YTDLP_UPDATE_NETWORK` | The feed or the download could not be fetched. |
+| `ERR_YTDLP_UPDATE_SIGNATURE` | The feed isn't signed by a trusted key, has expired, or is older than one already seen. |
+| `ERR_YTDLP_UPDATE_CORRUPT` | The download doesn't match the signed feed. |
+| `ERR_YTDLP_UPDATE_BROKEN` | The new yt-dlp didn't start on this device. The previous one is still in use. |
+| `ERR_YTDLP_UPDATE_BUSY` | Another check or update is already running. |
+| `ERR_YTDLP_UPDATE_DISABLED` | `updateYtDlp()` was called in `'bundled'` mode. |
+| `ERR_YTDLP_UPDATE_CONFIG` | `setUpdates()` was given an invalid mode, interval or feed. |
 
 ### Running any yt-dlp command
 
@@ -426,6 +531,39 @@ succeeds:
 The **Update bundled yt-dlp** workflow does the first part weekly and opens a PR when there's
 a new version.
 
+### Over-the-air yt-dlp bundles
+
+Apps that call `setUpdates('auto' | 'manual')` read a signed feed and download the stripped
+yt-dlp (`site-packages.zip`, about 1.5 MB) it points to. The **Publish yt-dlp bundle**
+workflow maintains both: every day it checks for a new stable yt-dlp, builds the bundle,
+runs the offline and live-site tests, and only if they all pass publishes the zip as a
+GitHub release and commits a newly signed `feed.json` to the `feed` branch. If a test fails
+it publishes nothing and opens an issue.
+
+```sh
+python scripts/build_android_runtime.py --bundle-only     # dist/bundle/site-packages.zip + bundle.json
+python scripts/publish_bundle.py add --feed feed.json --bundle dist/bundle/bundle.json --url <https url of the zip>
+python scripts/publish_bundle.py sign --feed feed.json    # private key from --key or $EYD_SIGNING_KEY
+python scripts/publish_bundle.py verify --feed feed.json
+```
+
+`publish_bundle.py --help` lists the rest: `refresh` (renew the expiry), `revoke` (make apps
+stop using a bundle), `rotate` (replace a leaked signing key using the backup key).
+
+- **`runtimeApi`** in `runtime-versions.json` is what a bundle needs from the app: the Python
+  minor version, the protocol between the Kotlin module and `expo_yt_dlp_runner.py`, and the
+  QuickJS that yt-dlp-ejs needs. An app only accepts bundles built for its own number.
+  **Bump it whenever one of those changes**, or older apps will download a bundle they
+  can't run (the on-device self-check would reject it, but they'd retry every day).
+- **Keys.** `update-feed.json` holds the feed URL and the public keys compiled into the
+  package. `python scripts/publish_bundle.py keygen --role ci --out ci.pem` creates the key
+  the workflow signs with (store it as the `EYD_SIGNING_KEY` secret of the `bundle-signing`
+  environment, then delete the file); `--role backup` creates one to keep offline, used only
+  to replace the first if it leaks. Private keys never go in the repository.
+- **Your own feed.** Fork the scripts, set your `extractors`, run `keygen`, host `feed.json`,
+  `feed.json.sig` and the zip anywhere on HTTPS, and pass `feed: { url, publicKey }` to
+  `setUpdates()`.
+
 ### Changing which sites are included
 
 Edit `"extractors"` in `runtime-versions.json`. The names are yt-dlp's extractor module names
@@ -440,6 +578,7 @@ entirely isn't supported (all ~1,800 extractors would add several MB).
 | --- | --- |
 | `npm run build:runtime` | Builds `android/src/main/jniLibs` and `assets/expo-yt-dlp`. `--python-only` skips the NDK builds. |
 | `npm test` | Unit tests for the TypeScript layer (jest). |
+| `npm run test:updates` | Offline tests of yt-dlp updates: the feed tooling (signing, key rotation) and the app's own verification and state logic, compiled with `kotlinc` and run on the JVM against really-signed feeds. |
 | `npm run test:runtime` | Offline checks of the built bundle: the trimmed yt-dlp imports and runs on the stripped stdlib, and network retries behave (local test server). |
 | `npm run test:online` | Resolves, plans and downloads from the real sites using the bundled runtime. Can fail for reasons outside this repo (bot checks, rate limits). |
 | `python scripts/device_smoke_test.py -- -J <url>` | Pushes the runtime to a connected device or emulator over `adb` and runs yt-dlp there, without building an app. |
@@ -454,6 +593,7 @@ ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMux
 | --- | --- | --- |
 | **CI** (`ci.yml`) | Every push to `main`, every PR | Lint, types, unit tests; full runtime build on Linux with offline tests; checks the npm tarball's contents; on PRs, also a Gradle build of the example app. |
 | **Update bundled yt-dlp** (`update-deps.yml`) | Mondays, or manually (stable/nightly) | `deps:update` plus tests, then a PR with the new pins. Needs *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. |
+| **Publish yt-dlp bundle** (`publish-bundle.yml`) | Daily, or manually | Builds and tests the stripped yt-dlp for the newest stable release, then publishes it and a signed feed for apps to update from. The signing key lives in the `bundle-signing` environment. |
 | **Release** (`release.yml`) | Pushing a `v*` tag | Builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions. |
 
 ### Releasing

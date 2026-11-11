@@ -14,6 +14,10 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 private const val PROGRESS_EVENT = "onProgress"
+private const val UPDATE_EVENT = "onUpdate"
+
+// stderr of a Python process whose yt-dlp bundle is damaged, as opposed to yt-dlp failing on a URL.
+private val BROKEN_BUNDLE = Regex("ModuleNotFoundError|ImportError|bad magic number|zipimport\\.ZipImportError")
 
 // getInfo and download run through python/expo_yt_dlp_runner.py (yt-dlp plus retries for
 // transient network errors). In download mode it prints one JSON event per line with this
@@ -26,12 +30,13 @@ class ExpoYtDlpModule : Module() {
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   private val ytDlp by lazy { YtDlpRuntime(context.applicationContext) }
+  private val updater by lazy { BundleUpdater(ytDlp) { event -> sendEvent(UPDATE_EVENT, event) } }
   private val jobs = ConcurrentHashMap<String, YtDlpProcess>()
 
   override fun definition() = ModuleDefinition {
     Name("ExpoYtDlp")
 
-    Events(PROGRESS_EVENT)
+    Events(PROGRESS_EVENT, UPDATE_EVENT)
 
     Function("isSupported") {
       ytDlp.isSupported
@@ -56,6 +61,28 @@ class ExpoYtDlpModule : Module() {
       }
     }
 
+    // yt-dlp updates: see BundleUpdater. The mode is stored, so it applies from app start.
+    Function("setUpdates") { config: UpdateConfig ->
+      updater.configure(config)
+      updater.state()
+    }
+
+    Function("getUpdateState") {
+      updater.state()
+    }
+
+    AsyncFunction("checkForUpdate") Coroutine { ->
+      withContext(Dispatchers.IO) { updater.check() }
+    }
+
+    AsyncFunction("updateYtDlp") Coroutine { ->
+      withContext(Dispatchers.IO) { updater.update() }
+    }
+
+    AsyncFunction("resetToBundled") Coroutine { ->
+      withContext(Dispatchers.IO) { updater.reset() }
+    }
+
     Function("cancel") { id: String ->
       jobs[id]?.cancel() != null
     }
@@ -71,6 +98,27 @@ class ExpoYtDlpModule : Module() {
     module: String = "yt_dlp",
     moduleArgs: List<String> = emptyList(),
     onLine: ((String) -> Unit)? = null,
+  ): YtDlpProcess.Result {
+    // On an unsupported device the process below reports why; don't trip over update state first.
+    if (ytDlp.isSupported) updater.autoCheck()
+    val downloadedBundle = if (ytDlp.isSupported) ytDlp.store.activeBundle()?.first?.bundleId else null
+    var result = runProcess(id, args, module, moduleArgs, onLine)
+    if (result.exitCode != 0 && downloadedBundle != null && BROKEN_BUNDLE.containsMatchIn(result.stderr)) {
+      // The downloaded yt-dlp can't even be imported: drop it and redo the call on the bundled one.
+      updater.reportBroken(downloadedBundle, YtDlpProcess.errorMessage(result))
+      result = runProcess(id, args, module, moduleArgs, onLine)
+    }
+    // A failing extractor is the usual sign that a newer yt-dlp is needed.
+    if (result.exitCode != 0) updater.autoCheck(afterFailure = true)
+    return result
+  }
+
+  private fun runProcess(
+    id: String,
+    args: List<String>,
+    module: String,
+    moduleArgs: List<String>,
+    onLine: ((String) -> Unit)?,
   ): YtDlpProcess.Result {
     val job = YtDlpProcess(ytDlp.processBuilder(args, module, moduleArgs))
     if (jobs.putIfAbsent(id, job) != null) throw DuplicateJobException(id)

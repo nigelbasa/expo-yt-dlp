@@ -1,0 +1,195 @@
+# Publishes over-the-air yt-dlp bundles: installed apps (setUpdates('auto' | 'manual')) read
+# the signed feed on the `feed` branch and download the bundle from a GitHub release.
+#
+# Daily it looks for a newer stable yt-dlp. If there is one it builds the stripped bundle,
+# tests it, and only when every test passes publishes the zip and a newly signed feed.
+# Otherwise nothing is published and an issue is opened. With no new yt-dlp it re-signs the
+# feed when its expiry is getting close.
+#
+# One-time setup:
+#   1. python scripts/publish_bundle.py keygen --role ci --out ci.pem
+#      python scripts/publish_bundle.py keygen --role backup --out backup.pem
+#      Commit update-feed.json (public keys only). Keep backup.pem offline.
+#   2. Settings -> Environments -> new environment `bundle-signing`, deployment branches:
+#      `main` only. Add ci.pem's contents as the environment secret EYD_SIGNING_KEY, then
+#      delete ci.pem.
+#   3. Release a package version that contains those keys; apps built with it can update.
+name: Publish yt-dlp bundle
+
+on:
+  schedule:
+    - cron: '30 6 * * *' # daily 06:30 UTC
+  workflow_dispatch:
+    inputs:
+      ytdlp:
+        description: yt-dlp version to publish (default, newest stable)
+        type: string
+        default: ''
+      skip_online:
+        description: Publish even if the live-site test fails (after testing on a device yourself)
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: publish-bundle
+  cancel-in-progress: false
+
+jobs:
+  # Builds and tests with no access to the signing key: this job runs yt-dlp's code.
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      YTDLP_VERSION: ${{ inputs.ytdlp }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Fetch the current feed
+        run: |
+          mkdir feed
+          if git fetch origin feed; then
+            git show FETCH_HEAD:feed.json > feed/feed.json
+          fi
+
+      - name: Pin the target yt-dlp (not committed; the Update bundled yt-dlp PR does that)
+        run: |
+          if [ -n "$YTDLP_VERSION" ]; then
+            [[ "$YTDLP_VERSION" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]] || { echo "bad version: $YTDLP_VERSION"; exit 1; }
+            python scripts/update_deps.py update --no-build --ytdlp "$YTDLP_VERSION"
+          else
+            python scripts/update_deps.py update --no-build --channel stable
+          fi
+
+      - name: Build the bundle
+        run: python scripts/build_android_runtime.py --bundle-only
+
+      - name: Decide what to do
+        id: plan
+        run: |
+          action=$(python scripts/publish_bundle.py plan --feed feed/feed.json --bundle dist/bundle/bundle.json)
+          version=$(jq -r .ytDlp dist/bundle/bundle.json)
+          echo "action=$action" | tee -a "$GITHUB_OUTPUT"
+          echo "version=$version" | tee -a "$GITHUB_OUTPUT"
+          echo "tag=bundle-$version-api$(jq -r .runtimeApi dist/bundle/bundle.json)" | tee -a "$GITHUB_OUTPUT"
+
+      # ---- Gate: all of this must pass before the publish job runs -------------------------
+      - name: Build the runtime the tests run against
+        if: steps.plan.outputs.action == 'publish'
+        run: |
+          python scripts/build_android_runtime.py --python-only
+          # The tested zip and the published zip must be the same bytes.
+          cmp android/src/main/assets/expo-yt-dlp/site-packages.zip dist/bundle/site-packages.zip
+
+      - name: Offline tests (trimmed import check, network retries, feed tooling)
+        if: steps.plan.outputs.action == 'publish'
+        run: |
+          python scripts/host_smoke_test.py -- --list-extractors
+          python scripts/test_runner_retry.py
+          python scripts/test_publish_bundle.py
+
+      - name: Live-site test
+        if: steps.plan.outputs.action == 'publish'
+        continue-on-error: ${{ inputs.skip_online || false }}
+        run: python scripts/online_test.py
+
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.action == 'publish'
+        with:
+          name: bundle
+          retention-days: 7
+          path: dist/bundle
+
+      - name: Report a failed gate
+        if: failure()
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          gh issue create \
+            --title "yt-dlp bundle ${VERSION:-build} was not published" \
+            --body "The bundle did not pass its tests, so nothing was published and installed apps keep their current yt-dlp. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  # Holds the signing key. Only handles files the build job produced; runs no yt-dlp code.
+  publish:
+    needs: build
+    if: needs.build.outputs.action != 'none'
+    runs-on: ubuntu-latest
+    environment: bundle-signing
+    permissions:
+      contents: write      # bundle release, feed branch
+      id-token: write      # build provenance
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACTION: ${{ needs.build.outputs.action }}
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Check out the feed branch
+        run: |
+          if git fetch origin feed; then
+            git worktree add feed-branch FETCH_HEAD
+          else
+            git worktree add --detach feed-branch
+            git -C feed-branch checkout --orphan feed
+            git -C feed-branch rm -rfq .
+          fi
+
+      - uses: actions/download-artifact@v5
+        if: env.ACTION == 'publish'
+        with:
+          name: bundle
+          path: dist/bundle
+
+      - name: Attest build provenance
+        if: env.ACTION == 'publish'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/bundle/site-packages.zip
+
+      - name: Create the bundle release
+        if: env.ACTION == 'publish'
+        run: |
+          gh release create "$TAG" dist/bundle/site-packages.zip dist/bundle/bundle.json \
+            --latest=false \
+            --title "yt-dlp $VERSION bundle" \
+            --notes "Over-the-air yt-dlp bundle for expo-yt-dlp. Apps fetch it through the signed feed; it is not an npm release."
+
+      - name: Add the bundle to the feed
+        if: env.ACTION == 'publish'
+        run: |
+          python scripts/publish_bundle.py add --feed feed-branch/feed.json --bundle dist/bundle/bundle.json \
+            --url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/site-packages.zip"
+
+      - name: Renew the feed's expiry
+        if: env.ACTION == 'refresh'
+        run: python scripts/publish_bundle.py refresh --feed feed-branch/feed.json
+
+      - name: Sign and push the feed
+        env:
+          EYD_SIGNING_KEY: ${{ secrets.EYD_SIGNING_KEY }}
+        run: |
+          python scripts/publish_bundle.py sign --feed feed-branch/feed.json
+          python scripts/publish_bundle.py verify --feed feed-branch/feed.json
+          cd feed-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add feed.json feed.json.sig
+          git commit -m "Feed: $ACTION (yt-dlp $VERSION)"
+          git push origin HEAD:feed

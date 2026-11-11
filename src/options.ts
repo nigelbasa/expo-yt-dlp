@@ -1,5 +1,9 @@
-import type { DownloadOptions, InfoOptions } from './ExpoYtDlp.types';
-import type { NativeDownloadOptions, NativeInfoOptions } from './ExpoYtDlpModule';
+import type { DownloadOptions, InfoOptions, UpdateMode, UpdateOptions } from './ExpoYtDlp.types';
+import type {
+  NativeDownloadOptions,
+  NativeInfoOptions,
+  NativeUpdateConfig,
+} from './ExpoYtDlpModule';
 
 /** yt-dlp CLI arguments for the options that have no native field. */
 export function downloadArgs(options: DownloadOptions): string[] {
@@ -44,5 +48,33 @@ export function toNativeInfoOptions(options: InfoOptions): NativeInfoOptions {
     cookiesFile: options.cookiesFile,
     networkRetries: options.networkRetries,
     extraArgs: options.extraArgs ?? [],
+  };
+}
+
+const UPDATE_MODES: UpdateMode[] = ['bundled', 'auto', 'manual'];
+
+/**
+ * `setUpdates()` replaces the whole update configuration, so anything left out goes back
+ * to its default (24 hours, the official feed).
+ */
+export function toNativeUpdateConfig(options: UpdateMode | UpdateOptions): NativeUpdateConfig {
+  const {
+    mode,
+    checkIntervalHours = 24,
+    feed,
+  } = typeof options === 'string' ? { mode: options } : options;
+  if (!UPDATE_MODES.includes(mode)) {
+    throw new TypeError(`setUpdates: mode must be one of ${UPDATE_MODES.join(', ')}`);
+  }
+  if (!(checkIntervalHours >= 1)) {
+    throw new TypeError('setUpdates: checkIntervalHours must be at least 1');
+  }
+  if (feed && !(feed.url?.startsWith('https://') && feed.publicKey)) {
+    throw new TypeError('setUpdates: feed needs an https url and a publicKey');
+  }
+  return {
+    mode,
+    checkIntervalHours,
+    ...(feed ? { feedUrl: feed.url, feedPublicKey: feed.publicKey } : {}),
   };
 }
