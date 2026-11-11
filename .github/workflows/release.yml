@@ -42,6 +42,14 @@ jobs:
           test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME" \
             || { echo "Tag $GITHUB_REF_NAME does not match package.json"; exit 1; }
 
+      # Ship the newest stable yt-dlp (and the yt-dlp-ejs it pins, and certifi) even if the pins
+      # in the tagged commit are older. The release notes list what was actually bundled; the
+      # weekly Update bundled yt-dlp PR brings the committed pins back in line.
+      - name: Use the newest stable yt-dlp
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/update_deps.py update --no-build --channel stable
+
       - name: Build ffmpeg
         if: inputs.with_ffmpeg
         run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" bash scripts/build_ffmpeg_android.sh
@@ -65,7 +73,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python - > notes.md <<'EOF'
-          import json
+          import json, os, re
+          version = os.environ['GITHUB_REF_NAME'].lstrip('v')
+          # This version's section of CHANGELOG.md, if it has one.
+          section = re.search(rf'^## {re.escape(version)}\b.*?\n(.*?)(?=^## |\Z)', open('CHANGELOG.md').read(), re.M | re.S)
+          if section:
+              print(section.group(1).strip() + '\n')
           p = json.load(open('runtime-versions.json'))
           w = p['wheels']
           print('Bundled runtime:')

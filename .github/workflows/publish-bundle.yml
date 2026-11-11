@@ -2,9 +2,14 @@
 # the signed feed on the `feed` branch and download the bundle from a GitHub release.
 #
 # Daily it looks for a newer stable yt-dlp. If there is one it builds the stripped bundle,
-# tests it, and only when every test passes publishes the zip and a newly signed feed.
+# runs the offline tests, and only when they pass publishes the zip and a newly signed feed.
 # Otherwise nothing is published and an issue is opened. With no new yt-dlp it re-signs the
 # feed when its expiry is getting close.
+#
+# The live-site test runs too, but only for information: YouTube and TikTok block GitHub's
+# servers ("Sign in to confirm you're not a bot"), so it can't pass here. Run
+# `npm run test:online` on your own machine and try the example app on a device instead.
+# On each phone a bundle must also start and report its version before it is used.
 #
 # One-time setup:
 #   1. python scripts/publish_bundle.py keygen --role ci --out ci.pem
@@ -25,8 +30,8 @@ on:
         description: yt-dlp version to publish (default, newest stable)
         type: string
         default: ''
-      skip_online:
-        description: Publish even if the live-site test fails (after testing on a device yourself)
+      require_online:
+        description: Refuse to publish if the live-site test fails (it usually fails on GitHub's servers)
         type: boolean
         default: false
 
@@ -49,6 +54,7 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
     env:
       GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }} # scripts/update_deps.py: GitHub API rate limit
       YTDLP_VERSION: ${{ inputs.ytdlp }}
     steps:
       - uses: actions/checkout@v5
@@ -99,9 +105,9 @@ jobs:
           python scripts/test_runner_retry.py
           python scripts/test_publish_bundle.py
 
-      - name: Live-site test
+      - name: Live-site test (informational unless require_online)
         if: steps.plan.outputs.action == 'publish'
-        continue-on-error: ${{ inputs.skip_online || false }}
+        continue-on-error: ${{ !inputs.require_online }}
         run: python scripts/online_test.py
 
       - uses: actions/upload-artifact@v4

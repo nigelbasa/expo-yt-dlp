@@ -21,6 +21,7 @@ the sites you need, and wraps them in a typed JS API. Anything the wrapper doesn
 - [Limitations](#limitations)
 - [Recipes](docs/recipes.md): sizes, audio, subtitles, playlists, batches, cancelling, gallery, cookies
 - [Contributing](CONTRIBUTING.md): how it works, building, updating yt-dlp, releasing
+- [Changelog](CHANGELOG.md)
 
 ## Install
 

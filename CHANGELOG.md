@@ -1,0 +1,28 @@
+# Changelog
+
+What changed in each version of `expo-yt-dlp`. Every release also bundles the newest stable
+yt-dlp available that day; the exact versions are listed in its
+[GitHub release](https://github.com/nigelbasa/expo-yt-dlp/releases).
+
+## 0.2.0
+
+- **yt-dlp updates without an app release.** `setUpdates('auto')` lets an installed app fetch
+  a newer, signed yt-dlp by itself when a site stops working. Also `checkForUpdate()`,
+  `updateYtDlp()`, `resetToBundled()`, `getUpdateState()` and `addUpdateListener()`.
+  Off by default.
+- **Streaming.** `getStream(url)` returns a direct link to play a video or its audio without
+  saving it.
+- **More sites.** TikTok and Twitter/X join YouTube, Facebook and Instagram.
+- `prepare()` now also reports `source`, `bundleId` and `runtimeApi`.
+- A failed call (`ERR_YTDLP`) carries `updateAvailable` when a newer yt-dlp might fix it.
+
+No breaking changes. Rebuild the native app after upgrading.
+
+## 0.1.1
+
+- License texts for OpenSSL, libffi, xz and bzip2 ship in the APK.
+- Published with npm provenance.
+
+## 0.1.0
+
+- First release: yt-dlp for Expo on Android with a bundled Python runtime.
