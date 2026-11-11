@@ -37,8 +37,6 @@ CASES = [
     ('instagram', 'https://www.instagram.com/reel/Chunk8-jurw/', False),
     ('tiktok', 'https://www.tiktok.com/@patroxofficial/video/6742501081818877190', False),
     ('twitter', 'https://twitter.com/CAF_Online/status/1349365911120195585', False),
-    # Also in the build but not testable here: reddit needs a logged-in cookies file, and
-    # vimeo refuses clients without browser TLS impersonation (curl_cffi, not bundled).
 ]
 
 

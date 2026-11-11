@@ -102,7 +102,10 @@ stop using a bundle), `rotate` (replace a leaked signing key using the backup ke
 Edit `"extractors"` in `runtime-versions.json`. The names are yt-dlp's extractor module names
 (`yt_dlp/extractor/<name>.py`), e.g. `"tiktok"`, `"vimeo"`, `"twitter"`, `"reddit"`. The generic
 extractor is always kept. Then run `npm run build:runtime && npm run test:runtime`; the build
-fails if a name doesn't exist. Each site adds a little to the bundle, and removing the list
+fails if a name doesn't exist. Add a live link for the site to `scripts/online_test.py` and
+run it before shipping: some sites don't work in this build. Reddit only answers a logged-in
+session, and Vimeo refuses clients without browser TLS impersonation (curl_cffi, which isn't
+bundled). Each site adds a little to the bundle, and removing the list
 entirely isn't supported (all ~1,800 extractors would add several MB).
 
 ### Building and testing
