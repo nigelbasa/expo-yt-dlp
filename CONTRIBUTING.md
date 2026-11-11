@@ -69,9 +69,13 @@ a new version.
 Apps that call `setUpdates('auto' | 'manual')` read a signed feed and download the stripped
 yt-dlp (`site-packages.zip`, about 1.5 MB) it points to. The **Publish yt-dlp bundle**
 workflow maintains both: every day it checks for a new stable yt-dlp, builds the bundle,
-runs the offline and live-site tests, and only if they all pass publishes the zip as a
-GitHub release and commits a newly signed `feed.json` to the `feed` branch. If a test fails
-it publishes nothing and opens an issue.
+runs the offline tests, and only if they pass publishes the zip as a GitHub release and
+commits a newly signed `feed.json` to the `feed` branch. If a test fails it publishes nothing
+and opens an issue.
+
+The live-site test also runs there but doesn't block publishing, because YouTube and TikTok
+refuse GitHub's servers. Live behaviour is checked where it works: `npm run test:online` on
+your own machine, and the example app's "Run all checks" on a device.
 
 ```sh
 python scripts/build_android_runtime.py --bundle-only     # dist/bundle/site-packages.zip + bundle.json
@@ -129,15 +133,20 @@ ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMux
 | --- | --- | --- |
 | **CI** (`ci.yml`) | Every push to `main`, every PR | Lint, types, unit tests; full runtime build on Linux with offline tests; checks the npm tarball's contents; on PRs, also a Gradle build of the example app. |
 | **Update bundled yt-dlp** (`update-deps.yml`) | Mondays, or manually (stable/nightly) | `deps:update` plus tests, then a PR with the new pins. Needs *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. |
-| **Publish yt-dlp bundle** (`publish-bundle.yml`) | Daily, or manually | Builds and tests the stripped yt-dlp for the newest stable release, then publishes it and a signed feed for apps to update from. The signing key lives in the `bundle-signing` environment. |
-| **Release** (`release.yml`) | Pushing a `v*` tag | Builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions. |
+| **Publish yt-dlp bundle** (`publish-bundle.yml`) | Daily, or manually | Builds and tests the stripped yt-dlp for the newest stable release, then publishes it and a signed feed for apps to update from. The live-site test is informational there. The signing key lives in the `bundle-signing` environment. |
+| **Release** (`release.yml`) | Pushing a `v*` tag | Switches to the newest stable yt-dlp, builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions. |
 
 ### Releasing
 
 ```sh
+# 1. Describe the release under a "## <new version>" heading in CHANGELOG.md and commit it.
 npm version patch          # or minor/major
 git push --follow-tags     # the Release workflow builds and publishes
 ```
+
+The workflow always bundles the newest stable yt-dlp at that moment, whatever the committed
+pins say, and the GitHub release notes are that version's CHANGELOG section followed by the
+exact versions that were bundled.
 
 Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers): npm
 trusts `release.yml` in this repository, so no npm token is stored in GitHub. npm only lets
