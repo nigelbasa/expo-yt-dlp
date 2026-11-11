@@ -10,8 +10,98 @@ export type RuntimeInfo = {
   /** When false, video+audio are merged with Android's MediaMuxer (H.264/AAC only). */
   hasFfmpeg: boolean;
   abi: string;
-  /** Extractor classes compiled into this build. */
+  /** Extractor classes in the yt-dlp bundle in use. */
   extractors: string[];
+  /** Whether yt-dlp is the copy shipped in the app or a newer one fetched by an update. */
+  source: BundleSource;
+  /** Identifies the exact yt-dlp bundle in use. */
+  bundleId: string;
+  /** What this build of the package accepts from updates; see the README on updates. */
+  runtimeApi: number;
+};
+
+// ---------------------------------------------------------------------------
+// yt-dlp updates
+// ---------------------------------------------------------------------------
+
+/**
+ * - `bundled`: only ever use the yt-dlp shipped inside the app (the default).
+ * - `auto`: look for a newer compatible yt-dlp in the background and switch to it.
+ * - `manual`: never check on its own; the app calls `checkForUpdate()` / `updateYtDlp()`.
+ */
+export type UpdateMode = 'bundled' | 'auto' | 'manual';
+
+export type UpdateOptions = {
+  mode: UpdateMode;
+  /** Auto mode: how often to look for a new yt-dlp. Default 24, minimum 1. */
+  checkIntervalHours?: number;
+  /**
+   * Use your own feed instead of the official one. `publicKey` is the hex public key printed
+   * by `scripts/publish_bundle.py keygen`; only feeds signed with it are accepted.
+   */
+  feed?: { url: string; publicKey: string };
+};
+
+export type BundleSource = 'bundled' | 'downloaded';
+
+export type InstalledYtDlp = { ytDlp: string; source: BundleSource; bundleId: string };
+
+export type AvailableYtDlp = { ytDlp: string; size: number; bundleId: string };
+
+export type UpdateErrorCode =
+  | 'ERR_YTDLP_UPDATE_NETWORK'
+  | 'ERR_YTDLP_UPDATE_SIGNATURE'
+  | 'ERR_YTDLP_UPDATE_CORRUPT'
+  | 'ERR_YTDLP_UPDATE_BROKEN'
+  | 'ERR_YTDLP_UPDATE_BUSY'
+  | 'ERR_YTDLP_UPDATE_DISABLED'
+  | 'ERR_YTDLP_UPDATE_CONFIG';
+
+/** `message` is a full sentence that can be shown to the user as it is. */
+export type UpdateError = { code: UpdateErrorCode; message: string };
+
+export type UpdateCheck = {
+  /**
+   * `app-update-required`: a newer yt-dlp exists, but only for a newer version of this
+   * package, so the app itself has to be updated to get it.
+   */
+  status: 'up-to-date' | 'available' | 'app-update-required';
+  current: InstalledYtDlp;
+  latest: AvailableYtDlp | null;
+};
+
+export type UpdateResult = UpdateCheck & {
+  /** Whether a new yt-dlp was installed by this call. */
+  updated: boolean;
+  /** The yt-dlp version in use after the call. */
+  ytDlp: string;
+  /** The yt-dlp version in use before the call. */
+  previous: string;
+};
+
+export type UpdateState = {
+  mode: UpdateMode;
+  checkIntervalHours: number;
+  feed: { url: string; custom: boolean };
+  current: InstalledYtDlp;
+  /** From the last successful check: the newer yt-dlp it found, if any. */
+  latest: AvailableYtDlp | null;
+  /** True when `updateYtDlp()` would install something. */
+  updateAvailable: boolean;
+  /** Time of the last check, in milliseconds since the epoch. */
+  lastCheck: number | null;
+  /** Why the last check or update failed; cleared by the next successful check. */
+  lastError: UpdateError | null;
+};
+
+export type UpdateEvent = {
+  type: 'checking' | 'downloading' | 'updated' | 'up-to-date' | 'app-update-required' | 'failed';
+  /** The yt-dlp version the event is about. */
+  ytDlp?: string;
+  /** `downloading`: 0 to 1. */
+  fraction?: number;
+  /** `failed` only. */
+  error?: UpdateError;
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +178,40 @@ export type InfoOptions = CommonOptions & {
   /** For playlists, list the entries without resolving each video (much faster). */
   flatPlaylist?: boolean;
   signal?: AbortSignal;
+};
+
+export type StreamOptions = Omit<InfoOptions, 'playlist' | 'flatPlaylist'> & {
+  /** Highest video height to pick. Default 720. */
+  maxHeight?: number;
+  /** Pick an audio stream instead of video. */
+  audioOnly?: boolean;
+  /**
+   * Allow a video-only stream with a separate audio stream when that gives a better picture
+   * than any single stream (YouTube's single streams stop at 360p). Only players that can
+   * play two sources together can use these, e.g. ExoPlayer's MergingMediaSource.
+   * Default false: always one URL.
+   */
+  allowSeparate?: boolean;
+};
+
+/** A direct media link for a player. These links expire (hours) and belong to this device's connection. */
+export type StreamSource = {
+  /**
+   * - `single`: one file with everything; any player can open `url`.
+   * - `hls`: `url` is an HLS playlist (.m3u8).
+   * - `separate`: `url` has the picture only and `audioUrl` the sound; play them together.
+   */
+  kind: 'single' | 'hls' | 'separate';
+  url: string;
+  audioUrl: string | null;
+  /** Send these with the request if the player lets you (some sites require them). */
+  headers: Record<string, string>;
+  formatId: string;
+  ext: string;
+  hasVideo: boolean;
+  height: number | null;
+  title: string;
+  duration: number | null;
 };
 
 export type SubtitleOptions = {
@@ -285,4 +409,5 @@ export type ExecResult = {
 
 export type ExpoYtDlpModuleEvents = {
   onProgress: (event: DownloadProgress) => void;
+  onUpdate: (event: UpdateEvent) => void;
 };

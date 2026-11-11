@@ -49,6 +49,10 @@ jobs:
         run: python scripts/host_smoke_test.py -- --list-extractors
       - name: Network retry tests (local server, no internet)
         run: python scripts/test_runner_retry.py
+      - name: yt-dlp update feed (signing tool, app-side verification on the JVM)
+        run: |
+          python scripts/test_publish_bundle.py
+          python scripts/test_update_logic.py
       - uses: actions/upload-artifact@v4
         with:
           name: android-runtime

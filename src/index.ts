@@ -14,16 +14,24 @@ import {
   Playlist,
   PlaylistEntry,
   RuntimeInfo,
+  StreamOptions,
+  StreamSource,
   SubtitleOptions,
   SubtitleTrack,
+  UpdateCheck,
+  UpdateEvent,
+  UpdateMode,
+  UpdateOptions,
+  UpdateResult,
+  UpdateState,
   VideoInfo,
 } from './ExpoYtDlp.types';
 import ExpoYtDlpModule from './ExpoYtDlpModule';
-import { listSubtitleTracks, summarizeFormats, toPlaylist } from './helpers';
-import { toNativeDownloadOptions, toNativeInfoOptions } from './options';
+import { listSubtitleTracks, pickStream, summarizeFormats, toPlaylist } from './helpers';
+import { toNativeDownloadOptions, toNativeInfoOptions, toNativeUpdateConfig } from './options';
 
 export * from './ExpoYtDlp.types';
-export { listSubtitleTracks, summarizeFormats } from './helpers';
+export { listSubtitleTracks, pickStream, summarizeFormats } from './helpers';
 
 let nextId = 0;
 function jobId(prefix: string): string {
@@ -39,6 +47,23 @@ function nativeModule() {
 
 function cancelledError(): Error & { code: string } {
   return Object.assign(new Error('The operation was cancelled'), { code: 'ERR_YTDLP_CANCELLED' });
+}
+
+/**
+ * When yt-dlp itself fails (`ERR_YTDLP`), marks the error with `updateAvailable`: whether
+ * the last update check found a newer yt-dlp that `updateYtDlp()` could install.
+ */
+function withUpdateHint<T>(promise: Promise<T>): Promise<T> {
+  return promise.catch((error: any) => {
+    if (error?.code === 'ERR_YTDLP') {
+      try {
+        error.updateAvailable = ExpoYtDlpModule?.getUpdateState().updateAvailable ?? false;
+      } catch {
+        // The original error matters more than the hint.
+      }
+    }
+    throw error;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +100,8 @@ export async function getInfo(url: string, options: InfoOptions = {}): Promise<V
   if (signal?.aborted) throw cancelledError();
   signal?.addEventListener('abort', onAbort);
   try {
-    return JSON.parse(await mod.getInfo(id, url, toNativeInfoOptions(options))) as VideoInfo;
+    const json = await withUpdateHint(mod.getInfo(id, url, toNativeInfoOptions(options)));
+    return JSON.parse(json) as VideoInfo;
   } finally {
     signal?.removeEventListener('abort', onAbort);
   }
@@ -100,6 +126,29 @@ export async function getSubtitles(
 }
 
 /**
+ * A direct link to play a video (or its audio) without saving it: hand `url` to a media
+ * player. By default it is always a single URL with picture and sound, at most 720p; see
+ * `StreamOptions`. The link expires after a few hours, so fetch it right before playing.
+ */
+export async function getStream(
+  urlOrInfo: string | VideoInfo,
+  options: StreamOptions = {}
+): Promise<StreamSource> {
+  const { maxHeight, audioOnly, allowSeparate, ...infoOptions } = options;
+  const info = typeof urlOrInfo === 'string' ? await getInfo(urlOrInfo, infoOptions) : urlOrInfo;
+  const stream = pickStream(info, { maxHeight, audioOnly, allowSeparate });
+  if (!stream) {
+    throw Object.assign(
+      new Error(`No playable ${audioOnly ? 'audio' : 'video'} stream was found.`),
+      {
+        code: 'ERR_YTDLP_NO_STREAM',
+      }
+    );
+  }
+  return stream;
+}
+
+/**
  * What `download(url, options)` would fetch — the exact formats, file names and sizes —
  * without downloading. Use it to check sizes before starting.
  */
@@ -107,10 +156,12 @@ export async function estimateDownload(
   url: string,
   options: Omit<DownloadOptions, 'onProgress'> = {}
 ): Promise<DownloadEstimate> {
-  const result = await nativeModule().download(
-    jobId('plan'),
-    url,
-    toNativeDownloadOptions(options, { simulate: true })
+  const result = await withUpdateHint(
+    nativeModule().download(
+      jobId('plan'),
+      url,
+      toNativeDownloadOptions(options, { simulate: true })
+    )
   );
   const sizes = result.items.map((item) => item.size);
   return {
@@ -159,9 +210,9 @@ export function download(url: string, options: DownloadOptions = {}): DownloadTa
         if (event.id === id) onProgress(event);
       })
     : null;
-  const promise = mod
-    .download(id, url, toNativeDownloadOptions(options))
-    .finally(() => subscription?.remove());
+  const promise = withUpdateHint(mod.download(id, url, toNativeDownloadOptions(options))).finally(
+    () => subscription?.remove()
+  );
   return { id, promise, cancel: () => mod.cancel(id) };
 }
 
@@ -237,6 +288,69 @@ export function downloadBatch(inputs: BatchInput[], options: BatchOptions = {}):
       running.forEach((task) => task.cancel());
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Keeping yt-dlp up to date
+// ---------------------------------------------------------------------------
+
+/**
+ * Chooses where yt-dlp comes from. Call it once at startup; the choice is stored on the
+ * device and can be changed at any time.
+ *
+ *   setUpdates('auto')      // fetch newer, verified yt-dlp builds in the background
+ *   setUpdates('bundled')   // default: only the yt-dlp shipped inside the app
+ *   setUpdates('manual')    // only when the app calls updateYtDlp()
+ *   setUpdates({ mode: 'auto', checkIntervalHours: 12, feed: { url, publicKey } })
+ *
+ * Auto mode never delays or fails a download: it checks at most once per interval, and once
+ * more after a yt-dlp failure. Follow it with `addUpdateListener()` or `getUpdateState()`.
+ * Returns null where the module is not available (iOS, web), so it is safe to call anywhere.
+ */
+export function setUpdates(options: UpdateMode | UpdateOptions): UpdateState | null {
+  const config = toNativeUpdateConfig(options);
+  return ExpoYtDlpModule?.setUpdates(config) ?? null;
+}
+
+/** The current mode, the yt-dlp in use, and the outcome of the last check. */
+export function getUpdateState(): UpdateState | null {
+  return ExpoYtDlpModule?.getUpdateState() ?? null;
+}
+
+/** Asks whether a newer yt-dlp exists for this app. Downloads nothing; works in any mode. */
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return nativeModule().checkForUpdate();
+}
+
+/**
+ * Checks, and if a newer compatible yt-dlp exists, downloads, verifies and switches to it.
+ * Downloads already running finish on the old version. Rejects with an `ERR_YTDLP_UPDATE_*`
+ * code whose message can be shown as it is; the yt-dlp in use is never left broken.
+ */
+export function updateYtDlp(
+  options: { onProgress?: (fraction: number) => void } = {}
+): Promise<UpdateResult> {
+  const mod = nativeModule();
+  const { onProgress } = options;
+  const subscription = onProgress
+    ? mod.addListener('onUpdate', (event) => {
+        if (event.type === 'downloading') onProgress(event.fraction ?? 0);
+      })
+    : null;
+  return mod.updateYtDlp().finally(() => subscription?.remove());
+}
+
+/** Goes back to the yt-dlp shipped inside the app and forgets the downloaded one. */
+export function resetToBundled(): Promise<UpdateState> {
+  return nativeModule().resetToBundled();
+}
+
+/**
+ * Follows update activity, including auto mode's background checks: `checking`,
+ * `downloading`, `updated`, `up-to-date`, `app-update-required` and `failed` (with `error`).
+ */
+export function addUpdateListener(listener: (event: UpdateEvent) => void): { remove(): void } {
+  return ExpoYtDlpModule?.addListener('onUpdate', listener) ?? { remove() {} };
 }
 
 // ---------------------------------------------------------------------------

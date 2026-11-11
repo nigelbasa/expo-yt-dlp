@@ -11,17 +11,16 @@ the sites you need, and wraps them in a typed JS API. Anything the wrapper doesn
 | | |
 | --- | --- |
 | **Platforms** | Android (arm64-v8a, x86_64). iOS is planned. |
-| **Sites in this build** | YouTube, Facebook, Instagram, plus yt-dlp's generic extractor (pages with plain `<video>` tags) |
+| **Sites in this build** | YouTube, Facebook, Instagram, TikTok and Twitter/X, plus yt-dlp's generic extractor (pages with plain `<video>` tags) |
 | **Size** | About 11 MB added to a single-ABI APK; about 28 MB on the device once extracted |
 | **Requires** | A development build (`npx expo run:android` or EAS Build). It does not work in Expo Go. |
 
 - [Install](#install)
 - [Quick start](#quick-start)
 - [API](#api)
-- [Recipes](#recipes)
-- [How it works](#how-it-works)
-- [Maintaining the package](#maintaining-the-package)
 - [Limitations](#limitations)
+- [Recipes](docs/recipes.md): sizes, audio, subtitles, playlists, batches, cancelling, gallery, cookies
+- [Contributing](CONTRIBUTING.md): how it works, building, updating yt-dlp, releasing
 
 ## Install
 
@@ -90,6 +89,7 @@ Every function takes a URL from any supported site. All options are optional.
 | `getSubtitles(urlOrInfo, options?)` | `Promise<SubtitleTrack[]>` | Uploaded subtitles, then auto-generated captions. |
 | `getPlaylist(url, { limit? })` | `Promise<Playlist>` | Entries of a playlist or channel, without resolving each video. |
 | `search(query, { limit? })` | `Promise<PlaylistEntry[]>` | YouTube search results (default 10). |
+| `getStream(urlOrInfo, options?)` | `Promise<StreamSource>` | A direct link to play the video (or its audio) without saving it. |
 
 `getFormats` and `getSubtitles` also accept an info dict you already fetched, which saves a
 network round trip:
@@ -115,6 +115,29 @@ Options for lookups (`InfoOptions`):
 | `networkRetries` | `3` | Retries after dropped connections, timeouts and 5xx responses. |
 | `extraArgs` | | Any extra yt-dlp CLI arguments. |
 | `signal` | | An `AbortSignal` that cancels the lookup. |
+
+### Streaming without saving
+
+`getStream` returns a direct media link to hand to a player (`expo-video`, a WebView, or
+`Linking.openURL`):
+
+```ts
+const stream = await YtDlp.getStream(url);                       // one URL, picture + sound, up to 720p
+const audio = await YtDlp.getStream(url, { audioOnly: true });   // e.g. for a music player
+player.replace({ uri: stream.url, headers: stream.headers });
+```
+
+| Option | Default | |
+| --- | --- | --- |
+| `maxHeight` | `720` | Tallest video to pick. |
+| `audioOnly` | `false` | Pick an audio stream instead. |
+| `allowSeparate` | `false` | Also allow a video-only link plus a separate audio link (`kind: 'separate'`, `audioUrl` set) when that gives a better picture. Only for players that can play two sources together, such as ExoPlayer's `MergingMediaSource`. |
+
+`stream.kind` is `'single'` (a plain file), `'hls'` (an .m3u8 playlist) or `'separate'`.
+The links expire after a few hours and are tied to the device's connection, so fetch one
+right before playing and don't store it. YouTube's single-file streams stop at 360p; above
+that it offers HLS or separate streams. `getStream` also accepts an info dict you already
+have, and rejects with `ERR_YTDLP_NO_STREAM` when there is nothing playable.
 
 ### Downloading
 
@@ -161,6 +184,47 @@ These are the codecs every phone plays. Options (`DownloadOptions`):
 | `ERR_YTDLP_CANCELLED` | You called `cancel()`, or an `AbortSignal` fired. Partial files are deleted. |
 | `ERR_YTDLP_UNSUPPORTED` | This device or build can't run the runtime. The message says why (for example, a missing config plugin). |
 
+### Keeping yt-dlp up to date
+
+Sites change, and an old yt-dlp eventually stops working. The app can fetch a newer one by
+itself, with no app release:
+
+```ts
+YtDlp.setUpdates('auto'); // once, at startup; the choice is stored on the device
+```
+
+| Mode | |
+| --- | --- |
+| `'bundled'` (default) | Only the yt-dlp shipped inside the app. No update traffic. |
+| `'auto'` | Checks in the background (daily, and after a yt-dlp failure) and switches to a newer version. Never delays or fails a download. |
+| `'manual'` | Only when you call `updateYtDlp()`. |
+
+| Function | Returns | |
+| --- | --- | --- |
+| `setUpdates(mode \| options)` | `UpdateState \| null` | Sets the mode. Options: `{ mode, checkIntervalHours?, feed?: { url, publicKey } }`. |
+| `getUpdateState()` | `UpdateState \| null` | Mode, yt-dlp in use, `updateAvailable`, `lastCheck`, `lastError`. |
+| `checkForUpdate()` | `Promise<UpdateCheck>` | `status`: `'up-to-date'`, `'available'` or `'app-update-required'`. Downloads nothing. |
+| `updateYtDlp({ onProgress? })` | `Promise<UpdateResult>` | Downloads, verifies and switches. `{ updated, ytDlp, previous }`. |
+| `resetToBundled()` | `Promise<UpdateState>` | Back to the yt-dlp shipped in the app. |
+| `addUpdateListener(fn)` | `{ remove() }` | Events: `checking`, `downloading`, `updated`, `up-to-date`, `app-update-required`, `failed` (with `error`). |
+
+```ts
+const sub = YtDlp.addUpdateListener((event) => {
+  if (event.type === 'updated') console.log(`yt-dlp is now ${event.ytDlp}`);
+  if (event.type === 'failed') console.warn(event.error.message); // a sentence you can show
+});
+```
+
+- Only yt-dlp updates this way. Python, QuickJS and ffmpeg are part of the APK; when a new
+  yt-dlp needs a newer version of this package, the status is `'app-update-required'`.
+- Every update is signed and checked against keys built into the package, and has to start
+  on the device before it replaces the old one. If anything fails, the yt-dlp in use stays.
+- A failed call (`ERR_YTDLP`) has `updateAvailable: true` when `updateYtDlp()` might fix it.
+- Update errors have codes starting `ERR_YTDLP_UPDATE_` (`NETWORK`, `SIGNATURE`, `CORRUPT`,
+  `BROKEN`, `BUSY`, `DISABLED`, `CONFIG`).
+- Google Play restricts downloading executable code; interpreted Python is a grey area
+  there, which is one reason updates are off by default.
+
 ### Running any yt-dlp command
 
 `exec(args)` runs yt-dlp with raw CLI arguments and returns `{ exitCode, stdout, stderr }`.
@@ -187,307 +251,6 @@ See yt-dlp's [options](https://github.com/yt-dlp/yt-dlp#usage-and-options) and
 [output template](https://github.com/yt-dlp/yt-dlp#output-template) docs. `extraArgs` on the
 other functions accepts the same flags.
 
-## Recipes
-
-These examples use `import * as YtDlp from 'expo-yt-dlp'`.
-
-### Check the size before downloading
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function downloadIfSmall(url: string, limitBytes = 50_000_000) {
-  const plan = await YtDlp.estimateDownload(url, { maxHeight: 720 });
-  // totalSize is null when the site doesn't report sizes (e.g. some Facebook videos)
-  if (plan.totalSize != null && plan.totalSize > limitBytes) {
-    throw new Error(`Too big: ${(plan.totalSize / 1e6).toFixed(0)} MB`);
-  }
-  return YtDlp.download(url, { maxHeight: 720 }).promise;
-}
-```
-
-To let users pick a quality, list the formats and pass the chosen id as `format`:
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function pickQuality(url: string) {
-  const formats = await YtDlp.getFormats(url);
-  const choices = formats.filter((f) => f.hasVideo && f.vcodec?.startsWith('avc1'));
-  // e.g. [{ formatId: '137', resolution: '1920x1080', size: 48_000_000, ... }, ...]
-  const chosen = choices[0];
-  // Video-only formats have no sound: combine with the best audio using yt-dlp syntax.
-  return YtDlp.download(url, { format: `${chosen.formatId}+bestaudio[ext=m4a]` }).promise;
-}
-```
-
-Without a bundled ffmpeg, a `+` combination is merged on the device when Android's
-`MediaMuxer` supports the pair: H.264 + AAC into `.mp4`, or VP8/VP9 + Opus/Vorbis into
-`.webm`. Other pairs, such as VP9 + AAC, come back as two files: the video and the audio.
-
-### Audio only
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function audio(url: string) {
-  const { files } = await YtDlp.download(url, { audioOnly: true }).promise; // .m4a (AAC)
-  return files[0];
-}
-```
-
-### Subtitles
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function subtitles(url: string) {
-  // What's available? Uploaded tracks first, then auto-generated ones.
-  const tracks = await YtDlp.getSubtitles(url);
-  console.log(tracks.filter((t) => !t.automatic).map((t) => t.language));
-
-  // Only the subtitle files:
-  const subs = await YtDlp.downloadSubtitles(url, { languages: ['en', 'es'], format: 'vtt' }).promise;
-  console.log(subs.items[0].subtitles); // [{ language: 'en', ext: 'vtt', path: '...' }]
-
-  // Or together with the video:
-  await YtDlp.download(url, { subtitles: { languages: ['en'] }, thumbnail: true }).promise;
-}
-```
-
-### Playlists, channels and search
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function playlists() {
-  const list = await YtDlp.getPlaylist('https://www.youtube.com/playlist?list=PL…', { limit: 50 });
-  console.log(list.title, list.entries.length);
-
-  // Download the first five items as one job…
-  await YtDlp.download('https://www.youtube.com/playlist?list=PL…', { playlistItems: '1:5' }).promise;
-
-  // …or search and pick
-  const results = await YtDlp.search('blender open movie', { limit: 5 });
-  await YtDlp.download(results[0].url).promise;
-}
-```
-
-YouTube **Mixes** (the auto-generated "radio" playlists) work through the watch URL that
-YouTube gives you, `watch?v=ID&list=RD…`. They can run to dozens of songs, so always pass a
-`limit` or `playlistItems`. Not every video has a Mix, and in that case you get the single
-video back. A bare `playlist?list=RD…` URL doesn't work, because YouTube refuses to show
-Mixes that way.
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function mix(videoId: string) {
-  const url = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
-  const radio = await YtDlp.getPlaylist(url, { limit: 25 });
-  console.log(radio.title, radio.entries.map((e) => e.title));
-
-  // Plain download(url) fetches only the video; opt into the playlist to take songs from it
-  await YtDlp.download(url, { audioOnly: true, playlistItems: '1:10' }).promise;
-}
-```
-
-### Batches
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function batch(urls: string[]) {
-  const job = YtDlp.downloadBatch(urls, {
-    concurrency: 2, // each download is its own process; 2-3 is plenty on a phone
-    maxHeight: 720,
-    onProgress: (p, index) => console.log(`#${index}`, p.status, p.percent),
-    onItemDone: (r, index) => console.log(`#${index}`, r.ok ? 'done' : r.error.message),
-  });
-  // job.cancel() stops everything
-  const results = await job.promise; // never rejects; one entry per URL, in order
-  return results.filter((r) => r.ok);
-}
-```
-
-Items can override the shared options:
-`downloadBatch([url1, { url: url2, options: { audioOnly: true } }])`.
-
-### Cancelling
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function cancelling(url: string) {
-  const task = YtDlp.download(url);
-  setTimeout(() => task.cancel(), 5000);
-  try {
-    await task.promise;
-  } catch (e: any) {
-    if (e.code === 'ERR_YTDLP_CANCELLED') console.log('cancelled, partial files removed');
-  }
-
-  const controller = new AbortController();
-  const info = YtDlp.getInfo(url, { signal: controller.signal });
-  controller.abort();
-  await info.catch(() => {});
-}
-```
-
-### Save to the gallery
-
-Files land in app-private storage. To publish them, move them with
-[`expo-media-library`](https://docs.expo.dev/versions/latest/sdk/media-library/) or
-`expo-file-system`:
-
-```ts
-import * as MediaLibrary from 'expo-media-library';
-import * as YtDlp from 'expo-yt-dlp';
-
-async function saveToGallery(url: string) {
-  const { files } = await YtDlp.download(url, { maxHeight: 1080 }).promise;
-  await MediaLibrary.requestPermissionsAsync();
-  await MediaLibrary.saveToLibraryAsync(`file://${files[0]}`);
-}
-```
-
-### Logged-in content (Instagram, Facebook)
-
-Many Instagram and some Facebook posts require a session. Export cookies in Netscape format
-(for example with a "cookies.txt" browser extension), ship or download the file to the device,
-and pass `cookiesFile`:
-
-```ts
-import * as YtDlp from 'expo-yt-dlp';
-
-async function withCookies(url: string, cookiesPath: string) {
-  return YtDlp.download(url, { cookiesFile: cookiesPath }).promise;
-}
-```
-
-## How it works
-
-```
-JS (src/index.ts) ─ options → yt-dlp arguments
- └─ Expo module (Kotlin) ── spawns ──> libytdlp_python.so -m expo_yt_dlp_runner …   (child process)
-                                        ├─ libpython3.14.so + stripped stdlib   (python.org Android build)
-                                        ├─ yt-dlp via its Python API            (python/expo_yt_dlp_runner.py)
-                                        ├─ spawns libqjs.so                     (QuickJS-ng: YouTube JS challenges)
-                                        └─ spawns libffmpeg.so                  (optional)
-```
-
-- **Python.** python.org's official Android build of CPython ships only as an embeddable
-  `libpython`. [`native/python-launcher`](native/python-launcher/main.c) is a 10-line `main()`
-  linked against it, which gives yt-dlp a normal `python` to run under.
-- **Processes.** Every call is a separate child process, so cancelling means killing that
-  process.
-- **Why the binaries are named `lib*.so`.** Android only allows executing files from
-  `nativeLibraryDir`, and only extracts `lib*.so` files there. The launcher, QuickJS, ffmpeg
-  and the stdlib C extensions (`libpymod_*.so`, symlinked into `lib-dynload`) are all
-  packaged that way.
-- **Pure-Python code.** The stdlib and yt-dlp are precompiled to `.pyc`, zipped into the APK's
-  assets, and unpacked into app storage on first use.
-- **The driver.** [`expo_yt_dlp_runner.py`](python/expo_yt_dlp_runner.py) wraps yt-dlp's API.
-  It handles format selection for merging, JSON progress events, per-video results with sizes
-  and side files, and retries for transient network errors.
-- **Merging.** The best qualities are separate video and audio streams. Without ffmpeg, the
-  driver picks an H.264 + AAC pair and Kotlin merges it with Android's `MediaMuxer` (a stream
-  copy, not a re-encode). If a video has no such pair, which is common on Facebook, the best
-  single file is used instead.
-
-## Maintaining the package
-
-Everything the runtime is built from, including which sites are kept, is pinned in
-[`runtime-versions.json`](runtime-versions.json). Built binaries are not committed; they're
-produced by `npm run build:runtime` and published inside the npm tarball.
-
-**Requirements:** Python 3.14 (the bundle is precompiled for it), Node 20+, and the Android SDK
-with NDK r27+ and CMake. Set `ANDROID_HOME` / `ANDROID_NDK_HOME` if they aren't in the default
-locations.
-
-### Updating yt-dlp (and the rest)
-
-```sh
-npm run deps:check                          # pinned vs. latest upstream
-npm run deps:update                         # newest stable yt-dlp + the yt-dlp-ejs it pins + certifi
-npm run deps:update -- --channel nightly    # yt-dlp nightly build
-npm run deps:update -- --ytdlp 2026.8.19    # a specific version (also how to roll back)
-npm run deps:update -- --all                # also Python 3.14.x, QuickJS-ng, ffmpeg
-```
-
-`deps:update` rewrites the pins with verified SHA-256 hashes and rebuilds the runtime,
-re-trimming yt-dlp to the configured extractors. It then runs the offline tests. After it
-succeeds:
-1. Run `npm run test:online` to try the three sites for real.
-2. Run `npm run build:runtime` for a full native build.
-3. Try the example app on a device.
-4. Bump the version and tag it (see Releasing).
-
-The **Update bundled yt-dlp** workflow does the first part weekly and opens a PR when there's
-a new version.
-
-### Changing which sites are included
-
-Edit `"extractors"` in `runtime-versions.json`. The names are yt-dlp's extractor module names
-(`yt_dlp/extractor/<name>.py`), e.g. `"tiktok"`, `"vimeo"`, `"twitter"`, `"reddit"`. The generic
-extractor is always kept. Then run `npm run build:runtime && npm run test:runtime`; the build
-fails if a name doesn't exist. Each site adds a little to the bundle, and removing the list
-entirely isn't supported (all ~1,800 extractors would add several MB).
-
-### Building and testing
-
-| Command | What it does |
-| --- | --- |
-| `npm run build:runtime` | Builds `android/src/main/jniLibs` and `assets/expo-yt-dlp`. `--python-only` skips the NDK builds. |
-| `npm test` | Unit tests for the TypeScript layer (jest). |
-| `npm run test:runtime` | Offline checks of the built bundle: the trimmed yt-dlp imports and runs on the stripped stdlib, and network retries behave (local test server). |
-| `npm run test:online` | Resolves, plans and downloads from the real sites using the bundled runtime. Can fail for reasons outside this repo (bot checks, rate limits). |
-| `python scripts/device_smoke_test.py -- -J <url>` | Pushes the runtime to a connected device or emulator over `adb` and runs yt-dlp there, without building an app. |
-| `cd example && npx expo run:android` | The example app, which exercises every function. |
-
-The optional ffmpeg (`scripts/build_ffmpeg_android.sh`, Linux/macOS) builds a mux-only
-ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMuxer`.
-
-### CI
-
-| Workflow | When | What |
-| --- | --- | --- |
-| **CI** (`ci.yml`) | Every push to `main`, every PR | Lint, types, unit tests; full runtime build on Linux with offline tests; checks the npm tarball's contents; on PRs, also a Gradle build of the example app. |
-| **Update bundled yt-dlp** (`update-deps.yml`) | Mondays, or manually (stable/nightly) | `deps:update` plus tests, then a PR with the new pins. Needs *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. |
-| **Release** (`release.yml`) | Pushing a `v*` tag | Builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions. |
-
-### Releasing
-
-```sh
-npm version patch          # or minor/major
-git push --follow-tags     # the Release workflow builds and publishes
-```
-
-Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers): npm
-trusts `release.yml` in this repository, so no npm token is stored in GitHub. npm only lets
-you set that up for a package that already exists, so the very first version is published
-by hand, once:
-
-1. Turn on two-factor authentication for your npm account.
-2. Build and publish from a clean checkout:
-   ```sh
-   npm login
-   npm ci
-   npm run build:runtime      # both ABIs
-   npm run build
-   npm pack --dry-run         # check the file list and size
-   npm publish --access public
-   ```
-3. On npmjs.com, open the package's **Settings → Trusted publishing**, choose GitHub Actions
-   and enter owner `nigelbasa`, repository `expo-yt-dlp`, workflow `release.yml`, and leave
-   the environment empty.
-4. Optionally, under **Publishing access**, require 2FA and disallow tokens, so only the
-   workflow can publish.
-
-After that, every tag is published by the workflow, with a
-[provenance statement](https://docs.npmjs.com/generating-provenance-statements) that links
-the version on npm to the commit and workflow run that built it.
-
 ## Limitations
 
 - **Android only for now.** iOS needs an in-process interpreter, because iOS apps can't
@@ -500,8 +263,8 @@ the version on npm to the commit and workflow run that built it.
   skipped).
 - **Bot checks and rate limits.** YouTube may ask to "confirm you're not a bot", or rate-limit
   subtitle downloads. Those errors aren't retried; cookies from a logged-in session help.
-- **Sites change and yt-dlp follows quickly.** Keep the bundled version current with
-  `deps:update`.
+- **Sites change and yt-dlp follows quickly.** Turn on [updates](#keeping-yt-dlp-up-to-date),
+  or ship app releases with a current version of this package.
 - **App stores.** Google Play and the App Store reject apps that download from YouTube and
   similar sites without the rights holder's authorization.
 

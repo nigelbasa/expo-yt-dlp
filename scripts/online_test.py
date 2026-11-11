@@ -35,6 +35,8 @@ CASES = [
     ('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', True),
     ('facebook', 'https://www.facebook.com/cnn/videos/10155529876156509/', False),
     ('instagram', 'https://www.instagram.com/reel/Chunk8-jurw/', False),
+    ('tiktok', 'https://www.tiktok.com/@patroxofficial/video/6742501081818877190', False),
+    ('twitter', 'https://twitter.com/CAF_Online/status/1349365911120195585', False),
 ]
 
 
@@ -80,16 +82,19 @@ def main() -> None:
             if not ok:
                 failures.append(name)
 
+        only = set(sys.argv[1:])  # e.g. `online_test.py tiktok vimeo` runs just those sites
         for name, url, real in CASES:
+            if only and name not in only:
+                continue
             r = runner(['--info'], [], url)
             info = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
             report(f'{name} info', bool(info and info.get('formats')),
-                   f'"{info["title"][:40]}", {len(info["formats"])} formats' if info else r.stderr.strip()[-200:])
+                   f'"{info["title"][:40]}", {len(info["formats"])} formats' if info else r.stderr.strip()[-400:])
 
             template = ['-o', '%(title).50B [%(id)s].f%(format_id)s.%(ext)s']
             r = runner(['--native-merge', '--max-res', '720'], ['--simulate', *template], url)
             res = result(r)
-            item = (res or {}).get('items', [{}])[0] if res else None
+            item = ((res or {}).get('items') or [None])[0]
             report(f'{name} plan', r.returncode == 0 and bool(item and item.get('files')),
                    f'{[f["formatId"] for f in item["files"]]}, {item["size"]} bytes' if item and item.get('files')
                    else r.stderr.strip()[-200:])

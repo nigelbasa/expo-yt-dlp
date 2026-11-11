@@ -18,3 +18,7 @@ __tests__
 /native/
 /scripts/
 /python/
+/dist/
+/docs/
+/update-feed.json
+*.pem

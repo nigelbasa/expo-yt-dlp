@@ -23,6 +23,7 @@ Usage:
   python scripts/build_android_runtime.py                 # both ABIs, everything
   python scripts/build_android_runtime.py --abi arm64-v8a
   python scripts/build_android_runtime.py --python-only   # skip the NDK builds
+  python scripts/build_android_runtime.py --bundle-only   # only the over-the-air yt-dlp bundle
 """
 from __future__ import annotations
 
@@ -63,6 +64,10 @@ QUICKJS_NG = (PINS['quickjs-ng']['version'], PINS['quickjs-ng']['sha256'])
 
 # yt-dlp extractor modules to keep (yt_dlp/extractor/<name>.py or <name>/ package).
 EXTRACTORS = PINS['extractors']
+# What a yt-dlp bundle needs from the shell (Python minor, runner protocol, QuickJS). A shell
+# only accepts over-the-air bundles built for its own number; bump it when any of those change.
+RUNTIME_API = PINS['runtimeApi']
+UPDATE_FEED = json.loads((ROOT / 'update-feed.json').read_text(encoding='utf-8'))
 # Always kept: GenericIE is registered unconditionally as the fallback, and it finds plain
 # <video>/<audio> tags through the embed extractors in genericembeds (HTML5MediaEmbedIE,
 # QuotedHTMLIE), which it only sees if they are registered.
@@ -478,6 +483,19 @@ def build_jnilibs(abi: str, prefix: Path, tc: Toolchain | None, ffmpeg_dir: Path
 
 # ---------------------------------------------------------------------------
 
+def site_bundle(zip_path: Path, extractors: list[str]) -> dict:
+    """What identifies a site-packages.zip: the feed entry of an over-the-air bundle (minus its url)."""
+    sha256 = sha256_file(zip_path)
+    return {
+        'runtimeApi': RUNTIME_API,
+        'bundleId': sha256[:16],
+        'ytDlp': WHEELS['yt-dlp'][0],
+        'extractors': extractors,
+        'size': zip_path.stat().st_size,
+        'sha256': sha256,
+    }
+
+
 def dir_size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob('*') if p.is_file())
 
@@ -490,15 +508,29 @@ def main() -> None:
                         help='only build the Python bundles and copy python.org libs; skip NDK builds')
     parser.add_argument('--ffmpeg-dir', type=Path,
                         help='dir containing <abi>/ffmpeg and <abi>/ffprobe (default: .cache/ffmpeg)')
+    parser.add_argument('--bundle-only', action='store_true',
+                        help='only build the over-the-air bundle: site-packages.zip + bundle.json in --out')
+    parser.add_argument('--out', type=Path, default=ROOT / 'dist' / 'bundle',
+                        help='output dir for --bundle-only (default: dist/bundle)')
     args = parser.parse_args()
 
     if sys.version_info[:2] != tuple(map(int, PY_MINOR.split('.'))):
         raise SystemExit(f'Run this with Python {PY_MINOR} (bytecode must match the Android runtime); '
                          f'this is {sys.version.split()[0]}')
 
+    work = CACHE / 'work'
+    if args.bundle_only:
+        log('building site-packages bundle')
+        site, extractors = build_site_packages(work)
+        write_zip(site, args.out / 'site-packages.zip')
+        bundle = site_bundle(args.out / 'site-packages.zip', extractors)
+        (args.out / 'bundle.json').write_text(json.dumps(bundle, indent=2) + '\n', encoding='utf-8')
+        log(f'bundle {bundle["bundleId"]}: yt-dlp {bundle["ytDlp"]}, runtimeApi {RUNTIME_API}, '
+            f'{bundle["size"] / 1e6:.1f} MB -> {args.out}')
+        return
+
     abis = args.abi or list(PYTHON_ANDROID)
     prefixes = {abi: fetch_python_android(abi) for abi in abis}
-    work = CACHE / 'work'
 
     log('building stdlib bundle')
     stdlib = build_stdlib(prefixes, work)
@@ -523,6 +555,10 @@ def main() -> None:
         digest.update((ASSETS / name).read_bytes())
     manifest = {
         'bundleId': digest.hexdigest()[:16],
+        'runtimeApi': RUNTIME_API,
+        # Same id an over-the-air copy of this exact site-packages.zip would have.
+        'siteBundleId': site_bundle(ASSETS / 'site-packages.zip', extractors)['bundleId'],
+        'updateFeed': {k: UPDATE_FEED[k] for k in ('url', 'keys', 'backupKeys')},
         'python': PYTHON_VERSION,
         'ytDlp': WHEELS['yt-dlp'][0],
         'ytDlpEjs': WHEELS['yt-dlp-ejs'][0],

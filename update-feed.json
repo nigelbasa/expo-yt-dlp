@@ -1,0 +1,10 @@
+{
+  "$comment": "Where installed apps look for newer yt-dlp bundles, and the public keys (hex, X.509 P-256) their feed signature must match. Add keys with `python scripts/publish_bundle.py keygen`; never edit a key by hand. `keys` sign routine feeds from CI; `backupKeys` are kept offline and can only replace `keys`.",
+  "url": "https://raw.githubusercontent.com/nigelbasa/expo-yt-dlp/feed/feed.json",
+  "keys": [
+    "3059301306072a8648ce3d020106082a8648ce3d0301070342000433de51a72e853333102eb9db2b0ec2c99fdf3fd2e05b8e9e40c78d1c326b6a731a4597403284ca8970482237e83a863327ba03faac0159bd67199c421e31c484"
+  ],
+  "backupKeys": [
+    "3059301306072a8648ce3d020106082a8648ce3d030107034200049ed9f815d7df856b620b7bf7ebc7c397538f7c613913d072b939e7fc829e9c158608141550fb42a52ab554233074c73d27e3d2954c6533458cddc125d7ca85fe"
+  ]
+}

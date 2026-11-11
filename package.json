@@ -11,6 +11,7 @@
     "lint": "eslint src/",
     "test": "node internal/module_scripts/test.js",
     "test:runtime": "python scripts/host_smoke_test.py -- --list-extractors && python scripts/test_runner_retry.py",
+    "test:updates": "python scripts/test_publish_bundle.py && python scripts/test_update_logic.py",
     "test:online": "python scripts/online_test.py",
     "deps:check": "python scripts/update_deps.py check",
     "deps:update": "python scripts/update_deps.py update",

@@ -6,7 +6,10 @@ import android.system.Os
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
+import java.util.Timer
 import java.util.zip.ZipInputStream
+import kotlin.concurrent.schedule
 
 /**
  * The bundled Python + yt-dlp runtime.
@@ -15,6 +18,9 @@ import java.util.zip.ZipInputStream
  * extensions) are installed by Android into nativeLibraryDir, the only app location that
  * allows exec. Pure-Python pieces ship as zips in assets and are extracted once per bundle
  * version into noBackupFilesDir.
+ *
+ * yt-dlp itself (site-packages) can also come from a newer, verified download; see
+ * [BundleUpdater]. The copy in the APK is always kept as the fallback.
  */
 internal class YtDlpRuntime(private val context: Context) {
   private val nativeDir = File(context.applicationInfo.nativeLibraryDir)
@@ -40,6 +46,22 @@ internal class YtDlpRuntime(private val context: Context) {
 
   class Installation(val pythonHome: File, val sitePackages: File, val manifest: JSONObject)
 
+  /** assets/expo-yt-dlp/manifest.json, written by scripts/build_android_runtime.py. */
+  val manifest: JSONObject by lazy {
+    JSONObject(context.assets.open("$ASSET_DIR/manifest.json").bufferedReader().use { it.readText() })
+  }
+
+  val runtimeApi: Int
+    get() = manifest.optInt("runtimeApi", 0)
+
+  val bundledYtDlp: String
+    get() = manifest.getString("ytDlp")
+
+  /** Update state, reconciled with this app version the first time it is touched. */
+  val store: UpdateStore by lazy {
+    UpdateStore(root).also { it.reconcile(runtimeApi, bundledYtDlp) }
+  }
+
   @Volatile
   private var installation: Installation? = null
 
@@ -50,7 +72,6 @@ internal class YtDlpRuntime(private val context: Context) {
       throw UnsupportedRuntimeException(unsupportedReason())
     }
 
-    val manifest = JSONObject(context.assets.open("$ASSET_DIR/manifest.json").bufferedReader().use { it.readText() })
     val bundleId = manifest.getString("bundleId")
     val pyMinor = manifest.getString("python").split(".").take(2).joinToString(".")
     val dir = File(root, bundleId)
@@ -61,8 +82,8 @@ internal class YtDlpRuntime(private val context: Context) {
       root.mkdirs()
       val tmp = File(root, ".tmp-$bundleId-${System.nanoTime()}")
       try {
-        unzipAsset("$ASSET_DIR/python-stdlib.zip", File(tmp, "python/lib/python$pyMinor"))
-        unzipAsset("$ASSET_DIR/site-packages.zip", File(tmp, "site-packages"))
+        context.assets.open("$ASSET_DIR/python-stdlib.zip").use { unzip(it, File(tmp, "python/lib/python$pyMinor")) }
+        context.assets.open("$ASSET_DIR/site-packages.zip").use { unzip(it, File(tmp, "site-packages")) }
         File(tmp, COMPLETE_MARKER).createNewFile()
         dir.deleteRecursively()
         if (!tmp.renameTo(dir)) {
@@ -73,7 +94,9 @@ internal class YtDlpRuntime(private val context: Context) {
       }
     }
     // Drop runtimes from previous app versions and leftovers from interrupted extractions.
-    root.listFiles()?.filter { it.name != bundleId }?.forEach { it.deleteRecursively() }
+    // Downloaded bundles and the update state are looked after by UpdateStore.
+    val keep = setOf(bundleId, UpdateStore.OTA_DIR, UpdateStore.STATE_FILE)
+    root.listFiles()?.filter { it.name !in keep }?.forEach { it.deleteRecursively() }
 
     // nativeLibraryDir changes on every app update, so the links are rebuilt once per process.
     val extSuffix = manifest.getJSONObject("abis").getJSONObject(installedAbi).getString("extSuffix")
@@ -99,10 +122,16 @@ internal class YtDlpRuntime(private val context: Context) {
     }
   }
 
-  private fun unzipAsset(asset: String, dest: File) {
+  /**
+   * Extracts a zip into [dest]. Entries can only become regular files or directories inside
+   * [dest]; [maxBytes] bounds the extracted size (for zips that did not come from the APK).
+   */
+  fun unzip(input: InputStream, dest: File, maxBytes: Long = Long.MAX_VALUE) {
     dest.mkdirs()
     val destPath = dest.canonicalPath + File.separator
-    ZipInputStream(context.assets.open(asset).buffered()).use { zip ->
+    var remaining = maxBytes
+    val buffer = ByteArray(64 * 1024)
+    ZipInputStream(input.buffered()).use { zip ->
       while (true) {
         val entry = zip.nextEntry ?: break
         val out = File(dest, entry.name)
@@ -113,7 +142,15 @@ internal class YtDlpRuntime(private val context: Context) {
           out.mkdirs()
         } else {
           out.parentFile?.mkdirs()
-          out.outputStream().use { zip.copyTo(it) }
+          out.outputStream().use { file ->
+            while (true) {
+              val n = zip.read(buffer)
+              if (n < 0) break
+              remaining -= n
+              if (remaining < 0) throw IOException("Zip expands to more than $maxBytes bytes")
+              file.write(buffer, 0, n)
+            }
+          }
         }
       }
     }
@@ -139,10 +176,7 @@ internal class YtDlpRuntime(private val context: Context) {
    * before the yt-dlp options, which always start with the fixed runtime flags.
    */
   fun processBuilder(args: List<String>, module: String = "yt_dlp", moduleArgs: List<String> = emptyList()): ProcessBuilder {
-    val inst = ensureInstalled()
-    val tmp = File(cacheDir, "tmp").apply { mkdirs() }
-    val home = File(root, "home").apply { mkdirs() }
-
+    val bundled = ensureInstalled().sitePackages // first: reports an unsupported device properly
     val command = mutableListOf(python.absolutePath, "-m", module)
     command += moduleArgs
     command += listOf("--ignore-config", "--color", "never", "--cache-dir", File(cacheDir, "yt-dlp").path)
@@ -154,12 +188,38 @@ internal class YtDlpRuntime(private val context: Context) {
       command += listOf("--ffmpeg-location", ffmpeg.absolutePath)
     }
     command += args
+    return pythonProcess(command, store.activeBundle()?.second ?: bundled)
+  }
+
+  /**
+   * Imports a freshly extracted bundle the way a real job would and returns the yt-dlp
+   * version it reports, or null if it does not start (or hangs).
+   */
+  fun selfCheck(sitePackages: File): String? {
+    val code = "import expo_yt_dlp_runner, yt_dlp.version; print(yt_dlp.version.__version__)"
+    val process = YtDlpProcess(pythonProcess(listOf(python.absolutePath, "-c", code), sitePackages))
+    val watchdog = Timer(true)
+    watchdog.schedule(SELF_CHECK_TIMEOUT_MS) { process.cancel() }
+    return try {
+      val result = process.run()
+      result.stdout.trim().takeIf { result.exitCode == 0 && it.isNotEmpty() }
+    } catch (e: YtDlpCancelledException) {
+      null
+    } finally {
+      watchdog.cancel()
+    }
+  }
+
+  private fun pythonProcess(command: List<String>, sitePackages: File): ProcessBuilder {
+    val inst = ensureInstalled()
+    val tmp = File(cacheDir, "tmp").apply { mkdirs() }
+    val home = File(root, "home").apply { mkdirs() }
 
     return ProcessBuilder(command).apply {
       directory(tmp)
       environment().apply {
         put("PYTHONHOME", inst.pythonHome.path)
-        put("PYTHONPATH", inst.sitePackages.path)
+        put("PYTHONPATH", sitePackages.path)
         put("LD_LIBRARY_PATH", nativeDir.path)
         put("PYTHONUNBUFFERED", "1")
         put("PYTHONUTF8", "1")
@@ -167,7 +227,7 @@ internal class YtDlpRuntime(private val context: Context) {
         put("PYTHONNOUSERSITE", "1")
         put("TMPDIR", tmp.path) // QuickJS challenge scripts are written to temp files
         put("HOME", home.path)
-        put("SSL_CERT_FILE", File(inst.sitePackages, "certifi/cacert.pem").path)
+        put("SSL_CERT_FILE", File(sitePackages, "certifi/cacert.pem").path)
         put("LANG", "C.UTF-8")
       }
     }
@@ -175,19 +235,23 @@ internal class YtDlpRuntime(private val context: Context) {
 
   fun info(): Map<String, Any?> {
     val manifest = ensureInstalled().manifest
-    val extractors = manifest.getJSONArray("extractors")
+    val downloaded = store.activeBundle()?.first
     return mapOf(
       "python" to manifest.getString("python"),
-      "ytDlp" to manifest.getString("ytDlp"),
+      "ytDlp" to (downloaded?.ytDlp ?: bundledYtDlp),
       "quickjs" to if (hasJsRuntime) manifest.getString("quickjsNg") else null,
       "hasFfmpeg" to hasFfmpeg,
       "abi" to installedAbi,
-      "extractors" to List(extractors.length()) { extractors.getString(it) },
+      "extractors" to (downloaded?.extractors ?: manifest.getJSONArray("extractors").toStringList()),
+      "source" to if (downloaded != null) "downloaded" else "bundled",
+      "bundleId" to (downloaded?.bundleId ?: manifest.optString("siteBundleId")),
+      "runtimeApi" to runtimeApi,
     )
   }
 
   companion object {
     const val ASSET_DIR = "expo-yt-dlp"
     private const val COMPLETE_MARKER = ".complete"
+    private const val SELF_CHECK_TIMEOUT_MS = 60_000L
   }
 }
