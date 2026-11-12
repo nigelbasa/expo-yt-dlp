@@ -47,15 +47,14 @@ def main() -> None:
         out.mkdir()
         compile_ = subprocess.run(
             ['kotlinc', '-nowarn', '-cp', str(jar), '-d', str(classes),
-             str(SOURCES / 'YtDlpEngine.kt'), str(SOURCES / 'YtDlpProcess.kt'), str(SOURCES / 'Records.kt'),
-             *map(str, sorted((ROOT / 'scripts' / 'kotlin').glob('*Stubs.kt'))),
+             str(SOURCES / 'YtDlpEngine.kt'), str(SOURCES / 'YtDlpProcess.kt'), str(SOURCES / 'Errors.kt'), str(SOURCES / 'Options.kt'),
              str(ROOT / 'scripts' / 'kotlin' / 'engine' / 'EngineTest.kt')],
             capture_output=True, text=True)
         if compile_.returncode != 0:
             raise SystemExit(compile_.stdout + compile_.stderr)
         stdlib = Path(shutil.which('kotlinc')).resolve().parent.parent / 'lib' / 'kotlin-stdlib.jar'
         run = subprocess.run(
-            ['java', '-cp', f'{classes}:{jar}:{stdlib}', 'expo.modules.ytdlp.EngineTestKt',
+            ['java', '-cp', f'{classes}:{jar}:{stdlib}', 'io.github.nigelbasa.ytdlp.EngineTestKt',
              sys.executable, str(site), f'http://127.0.0.1:{server.server_port}', str(out)])
     server.shutdown()
     sys.exit(run.returncode)

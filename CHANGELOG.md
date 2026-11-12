@@ -4,6 +4,18 @@ What changed in each version of `expo-yt-dlp`. Every release also bundles the ne
 yt-dlp available that day; the exact versions are listed in its
 [GitHub release](https://github.com/nigelbasa/expo-yt-dlp/releases).
 
+## 0.4.0
+
+- **A Kotlin library for native Android apps:** `io.github.nigelbasa:ytdlp-android` on Maven
+  Central, same version as this package. It has the same runtime, engine and signed updates,
+  behind suspend functions; see [kotlin/README.md](kotlin/README.md).
+- The Android code is now one core shared by both packages (`io.github.nigelbasa.ytdlp`),
+  with the Expo module as a thin layer over it. The JavaScript API and its error codes are
+  unchanged.
+- CI runs the example app and the Kotlin library on an Android emulator.
+
+No breaking changes. Rebuild the native app after upgrading.
+
 ## 0.3.0
 
 - **Faster calls.** One Python process with yt-dlp loaded, the engine, now stays up between

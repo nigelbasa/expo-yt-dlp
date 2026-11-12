@@ -6,6 +6,7 @@ opens expoytdlpexample://selftest?base=... and waits for the app's "SELFTEST {..
 Checks that need a real site are skipped by the app; everything else must pass.
 
   python scripts/emulator_selftest.py path/to/app.apk [--timeout 900]
+  python scripts/emulator_selftest.py --serve   # only the server (for the Kotlin library's tests)
 
 Needs adb on PATH and ffmpeg (to make the clip). Writes the full logcat to emulator-logcat.txt.
 """
@@ -46,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self, head: bool = False):
         path = self.path.split('?')[0]
-        if path not in ('/clip.mp4', '/slow.mp4'):
+        if path not in ('/clip.mp4', '/slow.mp4'):  # anything else is a 404, which tests rely on
             self.send_error(404)
             return
         slow = path == '/slow.mp4'
@@ -75,16 +76,23 @@ def adb(*args: str, check: bool = True) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('apk')
+    parser.add_argument('apk', nargs='?')
     parser.add_argument('--timeout', type=int, default=900)
+    parser.add_argument('--serve', action='store_true', help='only run the server, until killed')
     args = parser.parse_args()
-    if not shutil.which('adb'):
-        sys.exit('adb not found on PATH')
 
     with tempfile.TemporaryDirectory() as tmp:
         Handler.clip = make_clip(Path(tmp) / 'clip.mp4')
     server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
     server.handle_error = lambda *a: None  # cancelled downloads hang up mid-response
+    if args.serve:
+        print(f'serving on port {PORT}', flush=True)
+        server.serve_forever()
+        return
+    if not args.apk:
+        parser.error('give the APK to test, or --serve')
+    if not shutil.which('adb'):
+        sys.exit('adb not found on PATH')
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     print(adb('install', '-r', '-g', args.apk).strip())

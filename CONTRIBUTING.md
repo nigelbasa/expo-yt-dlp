@@ -14,6 +14,12 @@ JS (src/index.ts) ─ options → yt-dlp arguments
                                         └─ spawns libffmpeg.so                  (optional)
 ```
 
+The Kotlin code is one core in `android/src/main/java/io/github/nigelbasa/ytdlp` (runtime,
+engine, jobs, updates, merging; `YtDlpCore.kt` is the entry point) with two thin front ends:
+the Expo module in `android/src/expo/java` for the npm package, and `YtDlp.kt`, the public
+API of the Kotlin library, which [`kotlin/`](kotlin) builds from the same sources, native
+libraries and assets.
+
 `getInfo` and `download` normally go to the engine instead: one `expo_yt_dlp_runner --serve`
 process that stays up and takes jobs as JSON lines on its input (`YtDlpEngine.kt`). When it is
 busy, switched off or missing from an older yt-dlp bundle, the call gets a process of its own
@@ -128,6 +134,8 @@ entirely isn't supported (all ~1,800 extractors would add several MB).
 | `npm run test:online` | Resolves, plans and downloads from the real sites using the bundled runtime. Can fail for reasons outside this repo (bot checks, rate limits). |
 | `python scripts/device_smoke_test.py -- -J <url>` | Pushes the runtime to a connected device or emulator over `adb` and runs yt-dlp there, without building an app. |
 | `cd example && npx expo run:android` | The example app, which exercises every function. |
+| `gradle -p kotlin assembleRelease` | Builds the Kotlin library (Gradle 8.11 and JDK 17; needs the built runtime). |
+| `python scripts/emulator_selftest.py --serve` then `gradle -p kotlin connectedDebugAndroidTest` | The Kotlin library's tests on a running emulator, against a local clip. |
 
 The optional ffmpeg (`scripts/build_ffmpeg_android.sh`, Linux/macOS) builds a mux-only
 ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMuxer`.
@@ -136,10 +144,10 @@ ffmpeg that the next `build:runtime` bundles. Without it, merging uses `MediaMux
 
 | Workflow | When | What |
 | --- | --- | --- |
-| **CI** (`ci.yml`) | Every push to `main`, every PR | Lint, types, unit tests; full runtime build on Linux with offline tests; checks the npm tarball's contents; on PRs, also a Gradle build of the example app. |
+| **CI** (`ci.yml`) | Every push to `main`, every PR | Lint, types, unit tests; full runtime build on Linux with offline tests; checks the npm tarball's contents; on PRs, also the example app's self-test and the Kotlin library's tests on an Android emulator, against a local clip, since YouTube blocks GitHub's servers. |
 | **Update bundled yt-dlp** (`update-deps.yml`) | Mondays, or manually (stable/nightly) | `deps:update` plus tests, then a PR with the new pins. Needs *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. |
 | **Publish yt-dlp bundle** (`publish-bundle.yml`) | Daily, or manually | Builds and tests the stripped yt-dlp for the newest stable release, then publishes it and a signed feed for apps to update from. The live-site test is informational there. The signing key lives in the `bundle-signing` environment. |
-| **Release** (`release.yml`) | Pushing a `v*` tag | Switches to the newest stable yt-dlp, builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions. |
+| **Release** (`release.yml`) | Pushing a `v*` tag | Switches to the newest stable yt-dlp, builds the runtime, runs the tests, publishes to npm with trusted publishing (no token stored), creates a GitHub release listing the bundled versions, then publishes the Kotlin library to Maven Central with the same runtime. |
 
 ### Releasing
 
@@ -173,6 +181,15 @@ by hand, once:
    the environment empty.
 4. Optionally, under **Publishing access**, require 2FA and disallow tokens, so only the
    workflow can publish.
+
+The Kotlin library goes to Maven Central as `io.github.nigelbasa:ytdlp-android` (the
+`io.github.nigelbasa` namespace is verified through the GitHub sign-in at
+central.sonatype.com). The `maven` job reads four secrets of the `maven-central` environment:
+
+| Secret | What |
+| --- | --- |
+| `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD` | A user token from central.sonatype.com (*View Account → Generate User Token*). |
+| `MAVEN_SIGNING_KEY`, `MAVEN_SIGNING_KEY_PASSWORD` | The armored private key that signs releases, and its passphrase. Its public half is [kotlin/signing-key.asc](kotlin/signing-key.asc), also on keyserver.ubuntu.com and keys.openpgp.org. To replace it, make a new key, set these two secrets, upload the public key to a keyserver and commit it there. |
 
 After that, every tag is published by the workflow, with a
 [provenance statement](https://docs.npmjs.com/generating-provenance-statements) that links

@@ -1,6 +1,6 @@
 // JVM tests for YtDlpEngine.kt, run by scripts/test_engine.py against the real runner
 // (python/expo_yt_dlp_runner.py in the built bundle) and a local web server.
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import java.io.File
 import kotlin.concurrent.thread

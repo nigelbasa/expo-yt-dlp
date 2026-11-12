@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLISH = ROOT / 'scripts' / 'publish_bundle.py'
-SOURCES = ROOT / 'android' / 'src' / 'main' / 'java' / 'expo' / 'modules' / 'ytdlp'
+SOURCES = ROOT / 'android' / 'src' / 'main' / 'java' / 'io' / 'github' / 'nigelbasa' / 'ytdlp'
 ORG_JSON = ('https://repo1.maven.org/maven2/org/json/json/20250517/json-20250517.jar',
             '3ea61b2a06e31edf1c91134fe9106b0ebb16628be169f3db75bc7a2b06b45796')
 
@@ -81,14 +81,14 @@ def main() -> None:
         classes = d / 'classes'
         compile_ = subprocess.run(
             ['kotlinc', '-nowarn', '-cp', str(jar), '-d', str(classes),
-             str(SOURCES / 'UpdateFeed.kt'), str(SOURCES / 'UpdateStore.kt'), str(SOURCES / 'Records.kt'),
+             str(SOURCES / 'UpdateFeed.kt'), str(SOURCES / 'UpdateStore.kt'), str(SOURCES / 'Errors.kt'), str(SOURCES / 'Options.kt'),
              *map(str, sorted((ROOT / 'scripts' / 'kotlin').glob('*.kt')))],
             capture_output=True, text=True)
         if compile_.returncode != 0:
             raise SystemExit(compile_.stdout + compile_.stderr)
         stdlib = Path(shutil.which('kotlinc')).resolve().parent.parent / 'lib' / 'kotlin-stdlib.jar'
         run = subprocess.run(
-            ['java', '-cp', f'{classes}:{jar}:{stdlib}', 'expo.modules.ytdlp.UpdateLogicTestKt', str(d)])
+            ['java', '-cp', f'{classes}:{jar}:{stdlib}', 'io.github.nigelbasa.ytdlp.UpdateLogicTestKt', str(d)])
         sys.exit(run.returncode)
 
 

@@ -12,6 +12,10 @@ android {
     versionCode 1
     versionName "0.1.0"
   }
+  // The Expo layer; src/main/java is the core shared with the Kotlin library (../kotlin).
+  sourceSets {
+    main.java.srcDirs += 'src/expo/java'
+  }
   lintOptions {
     abortOnError false
   }

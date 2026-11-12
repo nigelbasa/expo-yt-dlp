@@ -1,20 +1,12 @@
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import android.content.Context
-import expo.modules.kotlin.exception.Exceptions
-import expo.modules.kotlin.functions.Coroutine
-import expo.modules.kotlin.modules.Module
-import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-
-private const val PROGRESS_EVENT = "onProgress"
-private const val UPDATE_EVENT = "onUpdate"
+import java.util.concurrent.CopyOnWriteArrayList
 
 // stderr of a Python process whose yt-dlp bundle is damaged, as opposed to yt-dlp failing on a URL.
 private val BROKEN_BUNDLE = Regex("ModuleNotFoundError|ImportError|bad magic number|zipimport\\.ZipImportError")
@@ -25,102 +17,64 @@ private val BROKEN_BUNDLE = Regex("ModuleNotFoundError|ImportError|bad magic num
 private const val RUNNER_MODULE = "expo_yt_dlp_runner"
 private const val EVENT_MARK = "__EYD__"
 
-class ExpoYtDlpModule : Module() {
-  private val context: Context
-    get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-
-  private val ytDlp by lazy { YtDlpRuntime(context.applicationContext) }
-  private val updater by lazy { BundleUpdater(ytDlp) { event -> sendEvent(UPDATE_EVENT, event) } }
-  private val engine by lazy { YtDlpEngine({ ytDlp.engineLaunch() }) }
+/**
+ * Everything both front ends share: the runtime, the engine, updates and the job logic. The
+ * Expo module and the Kotlin [YtDlp] class are thin layers over it. One per app process (see
+ * [get]), so there is one engine and one update state whichever API an app uses. Results are
+ * plain maps and lists, the shape the JavaScript API exposes. Calls block; run them off the
+ * main thread.
+ */
+internal class YtDlpCore private constructor(private val context: Context) {
+  val runtime = YtDlpRuntime(context)
+  private val updateListeners = CopyOnWriteArrayList<(Map<String, Any?>) -> Unit>()
+  val updater = BundleUpdater(runtime) { event -> updateListeners.forEach { it(event) } }
+  val engine = YtDlpEngine({ runtime.engineLaunch() })
   private val jobs = ConcurrentHashMap<String, JobHandle>()
+  // Ids cancelled before their job registered (see cancel(early = true)).
+  private val cancelledEarly = ConcurrentHashMap.newKeySet<String>()
 
-  override fun definition() = ModuleDefinition {
-    Name("ExpoYtDlp")
+  companion object {
+    @Volatile
+    private var instance: YtDlpCore? = null
 
-    Events(PROGRESS_EVENT, UPDATE_EVENT)
+    fun get(context: Context): YtDlpCore =
+      instance ?: synchronized(this) { instance ?: YtDlpCore(context.applicationContext).also { instance = it } }
+  }
 
-    Function("isSupported") {
-      ytDlp.isSupported
-    }
+  fun addUpdateListener(listener: (Map<String, Any?>) -> Unit): () -> Unit {
+    updateListeners += listener
+    return { updateListeners -= listener }
+  }
 
-    AsyncFunction("prepare") Coroutine { ->
-      withContext(Dispatchers.IO) { ytDlp.info() }
-    }
+  /**
+   * Stops a running job. With [early], a job that hasn't registered yet is stopped as soon as
+   * it does; the caller must then call [forget] once the job is over.
+   */
+  fun cancel(id: String, early: Boolean = false): Boolean {
+    if (early) cancelledEarly += id
+    return jobs[id]?.cancel() != null
+  }
 
-    AsyncFunction("getInfo") Coroutine { id: String, url: String, options: InfoOptions ->
-      withContext(Dispatchers.IO) { getInfo(id, url, options) }
-    }
+  fun forget(id: String) {
+    cancelledEarly -= id
+  }
 
-    AsyncFunction("download") Coroutine { id: String, url: String, options: DownloadOptions ->
-      withContext(Dispatchers.IO) { download(id, url, options) }
-    }
+  fun cancelAll() = jobs.values.forEach { it.cancel() }
 
-    AsyncFunction("exec") Coroutine { id: String, args: List<String> ->
-      withContext(Dispatchers.IO) {
-        val result = runJob(id, args)
-        mapOf("exitCode" to result.exitCode, "stdout" to result.stdout, "stderr" to result.stderr)
-      }
-    }
+  fun exec(id: String, args: List<String>): YtDlpProcess.Result = runJob(id, args)
 
-    // yt-dlp updates: see BundleUpdater. The mode is stored, so it applies from app start.
-    Function("setUpdates") { config: UpdateConfig ->
-      updater.configure(config)
-      updater.state()
-    }
-
-    Function("getUpdateState") {
-      updater.state()
-    }
-
-    AsyncFunction("checkForUpdate") Coroutine { ->
-      withContext(Dispatchers.IO) { updater.check() }
-    }
-
-    AsyncFunction("updateYtDlp") Coroutine { ->
-      withContext(Dispatchers.IO) { updater.update() }
-    }
-
-    AsyncFunction("resetToBundled") Coroutine { ->
-      withContext(Dispatchers.IO) { updater.reset() }
-    }
-
-    // The engine: one Python process kept running between calls (see YtDlpEngine).
-    AsyncFunction("warmUp") Coroutine { ->
-      withContext(Dispatchers.IO) {
-        val running = ytDlp.isSupported && engine.warmUp()
-        mapOf(
-          "running" to running,
-          "startupMs" to if (running) engine.startupMs?.toDouble() else null,
-          "reason" to when {
-            running -> null
-            !ytDlp.isSupported -> "yt-dlp can't run on this device."
-            !engine.enabled -> "The engine is switched off."
-            else -> engine.startFailure
-          },
-        )
-      }
-    }
-
-    Function("shutDown") {
-      engine.shutDown()
-    }
-
-    Function("setEngine") { enabled: Boolean ->
-      engine.enabled = enabled
-    }
-
-    Function("isEngineRunning") {
-      engine.isRunning
-    }
-
-    Function("cancel") { id: String ->
-      jobs[id]?.cancel() != null
-    }
-
-    OnDestroy {
-      jobs.values.forEach { it.cancel() }
-      engine.shutDown()
-    }
+  fun warmUp(): Map<String, Any?> {
+    val running = runtime.isSupported && engine.warmUp()
+    return mapOf(
+      "running" to running,
+      "startupMs" to if (running) engine.startupMs?.toDouble() else null,
+      "reason" to when {
+        running -> null
+        !runtime.isSupported -> "yt-dlp can't run on this device."
+        !engine.enabled -> "The engine is switched off."
+        else -> engine.startFailure
+      },
+    )
   }
 
   private fun runJob(
@@ -131,8 +85,8 @@ class ExpoYtDlpModule : Module() {
     onLine: ((String) -> Unit)? = null,
   ): YtDlpProcess.Result {
     // On an unsupported device the process below reports why; don't trip over update state first.
-    if (ytDlp.isSupported) updater.autoCheck()
-    val downloadedBundle = if (ytDlp.isSupported) ytDlp.store.activeBundle()?.first?.bundleId else null
+    if (runtime.isSupported) updater.autoCheck()
+    val downloadedBundle = if (runtime.isSupported) runtime.store.activeBundle()?.first?.bundleId else null
     var result = runProcess(id, args, module, moduleArgs, onLine)
     if (result.exitCode != 0 && downloadedBundle != null && BROKEN_BUNDLE.containsMatchIn(result.stderr)) {
       // The downloaded yt-dlp can't even be imported: drop it and redo the call on the bundled one.
@@ -153,12 +107,13 @@ class ExpoYtDlpModule : Module() {
   ): YtDlpProcess.Result {
     val handle = JobHandle()
     if (jobs.putIfAbsent(id, handle) != null) throw DuplicateJobException(id)
+    if (id in cancelledEarly) handle.cancel()
     try {
-      if (module == RUNNER_MODULE && ytDlp.isSupported) {
+      if (module == RUNNER_MODULE && runtime.isSupported) {
         // The running engine takes the call if it is free; otherwise it gets its own process.
-        engine.run(handle, moduleArgs + ytDlp.runtimeArgs() + args, onLine)?.let { return it }
+        engine.run(handle, moduleArgs + runtime.runtimeArgs() + args, onLine)?.let { return it }
       }
-      val job = YtDlpProcess(ytDlp.processBuilder(args, module, moduleArgs))
+      val job = YtDlpProcess(runtime.processBuilder(args, module, moduleArgs))
       handle.attach(job)
       return job.run(onLine)
     } finally {
@@ -166,7 +121,8 @@ class ExpoYtDlpModule : Module() {
     }
   }
 
-  private fun getInfo(id: String, url: String, options: InfoOptions): String {
+  /** yt-dlp's JSON for the URL, as text. */
+  fun getInfo(id: String, url: String, options: InfoOptions): String {
     val args = mutableListOf<String>()
     if (options.flatPlaylist) args += "--flat-playlist"
     args += if (options.noPlaylist) "--no-playlist" else "--yes-playlist"
@@ -177,16 +133,25 @@ class ExpoYtDlpModule : Module() {
     val moduleArgs = listOf("--info", "--network-retries", options.networkRetries.toString(), "--")
     val result = runJob(id, args, RUNNER_MODULE, moduleArgs)
     if (result.exitCode != 0) throw YtDlpException(YtDlpProcess.errorMessage(result))
-    return result.stdout // parsed on the JS side; avoids converting a huge nested map over the bridge
+    return result.stdout
   }
 
-  private fun download(id: String, url: String, options: DownloadOptions): Map<String, Any?> {
+  /**
+   * Downloads [url]. [onProgress] gets maps with status "downloading", "finished", "retrying"
+   * or "merging". Returns `id`, `files` (paths) and `items` (one map per video).
+   */
+  fun download(
+    id: String,
+    url: String,
+    options: DownloadOptions,
+    onProgress: (Map<String, Any?>) -> Unit,
+  ): Map<String, Any?> {
     val outputDir = File(options.outputDir?.removePrefix("file://") ?: File(context.filesDir, "downloads").path)
     outputDir.mkdirs()
 
     // Without ffmpeg the runner picks, per video, an H.264 video + AAC audio pair to merge
     // here with MediaMuxer (or a single file with video when there is no such pair).
-    val nativeMerge = options.format == null && !options.audioOnly && !options.skipMedia && !ytDlp.hasFfmpeg
+    val nativeMerge = options.format == null && !options.audioOnly && !options.skipMedia && !runtime.hasFfmpeg
     val moduleArgs = mutableListOf("--network-retries", options.networkRetries.toString())
     if (nativeMerge) {
       moduleArgs += "--native-merge"
@@ -232,7 +197,7 @@ class ExpoYtDlpModule : Module() {
       when (event.optString("event")) {
         "progress" -> {
           event.optStringOrNull("tmpFilename")?.let { partials += it }
-          sendEvent(PROGRESS_EVENT, mapOf(
+          onProgress(mapOf(
             "id" to id,
             "videoId" to event.optStringOrNull("videoId"),
             "formatId" to event.optStringOrNull("formatId"),
@@ -246,7 +211,7 @@ class ExpoYtDlpModule : Module() {
             "fragmentCount" to event.optNumber("fragmentCount"),
           ))
         }
-        "retry" -> sendEvent(PROGRESS_EVENT, mapOf(
+        "retry" -> onProgress(mapOf(
           "id" to id,
           "status" to "retrying",
           "attempt" to event.optNumber("attempt"),
@@ -268,7 +233,7 @@ class ExpoYtDlpModule : Module() {
     val reported = items ?: throw YtDlpException("yt-dlp finished without reporting its files")
 
     val results = List(reported.length()) {
-      finishItem(id, reported.getJSONObject(it), simulate = options.simulate, tidyNames = nativeMerge)
+      finishItem(id, reported.getJSONObject(it), options.simulate, nativeMerge, onProgress)
     }
     val outputs = results.sumOf { it.files.size + it.subtitleCount + it.thumbnailCount }
     if (!options.simulate && outputs == 0) throw YtDlpException("yt-dlp finished without writing any file")
@@ -288,16 +253,22 @@ class ExpoYtDlpModule : Module() {
   /**
    * Muxes the video/audio pair the runner asked for (its native-merge picks, or a `+` format
    * requested without ffmpeg), tidies a lone native-merge file's name, and converts the item
-   * for JS.
+   * to maps.
    */
   @Suppress("UNCHECKED_CAST")
-  private fun finishItem(jobId: String, item: JSONObject, simulate: Boolean, tidyNames: Boolean): FinishedItem {
-    val fields = (item.toJsValue() as Map<String, Any?>).toMutableMap()
+  private fun finishItem(
+    jobId: String,
+    item: JSONObject,
+    simulate: Boolean,
+    tidyNames: Boolean,
+    onProgress: (Map<String, Any?>) -> Unit,
+  ): FinishedItem {
+    val fields = (item.toPlainValue() as Map<String, Any?>).toMutableMap()
     val files = (fields.remove("files") as List<Map<String, Any?>>).toMutableList()
     val merge = fields.remove("merge") as Map<String, Any?>?
     if (simulate) return FinishedItem(fields, files)
     if (merge != null) {
-      sendEvent(PROGRESS_EVENT, mapOf("id" to jobId, "videoId" to fields["id"], "status" to "merging"))
+      onProgress(mapOf("id" to jobId, "videoId" to fields["id"], "status" to "merging"))
       val video = files.first { it["path"] == merge["video"] }
       val audio = files.first { it["path"] == merge["audio"] }
       val videoPath = video["path"] as String
@@ -346,10 +317,10 @@ private fun JSONObject.optNumber(key: String): Double? =
 private fun JSONObject.optStringOrNull(key: String): String? =
   if (isNull(key)) null else optString(key)
 
-/** org.json values -> Maps/Lists/primitives the Expo bridge can pass to JS. */
-private fun Any?.toJsValue(): Any? = when (this) {
+/** org.json values -> Maps/Lists/primitives. */
+internal fun Any?.toPlainValue(): Any? = when (this) {
   null, JSONObject.NULL -> null
-  is JSONObject -> keys().asSequence().associateWith { get(it).toJsValue() }
-  is JSONArray -> List(length()) { get(it).toJsValue() }
+  is JSONObject -> keys().asSequence().associateWith { get(it).toPlainValue() }
+  is JSONArray -> List(length()) { get(it).toPlainValue() }
   else -> this
 }

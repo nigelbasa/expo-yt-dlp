@@ -1,4 +1,4 @@
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import org.json.JSONArray
 import org.json.JSONException
