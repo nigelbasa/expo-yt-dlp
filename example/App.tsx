@@ -117,14 +117,6 @@ export default function App() {
     return () => sub.remove();
   }, [append, refresh]);
 
-  useEffect(() => {
-    Linking.getInitialURL().then((link) => {
-      const base = selfTestBase(link);
-      if (base) runAllChecks(base);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const run = async (label: string, fn: () => Promise<unknown> | unknown) => {
     const started = Date.now();
     append(`${label}...`);
@@ -325,6 +317,14 @@ export default function App() {
     setBusy(false);
     refresh().catch(() => {});
   };
+
+  // Opened with the self-test link (CI): run the checks right away.
+  useEffect(() => {
+    Linking.getInitialURL().then((link) => {
+      const base = selfTestBase(link);
+      if (base) runAllChecks(base);
+    });
+  }, []);
 
   // Same call three ways, to see what the engine saves on this device.
   const compareSpeed = () =>
