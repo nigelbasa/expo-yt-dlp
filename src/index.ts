@@ -207,7 +207,11 @@ export function download(url: string, options: DownloadOptions = {}): DownloadTa
   const { onProgress } = options;
   const subscription = onProgress
     ? mod.addListener('onProgress', (event) => {
-        if (event.id === id) onProgress(event);
+        if (event.id !== id) return;
+        // yt-dlp's last event for a file often has no total, so the percentage would be missing.
+        onProgress(
+          event.status === 'finished' && event.percent == null ? { ...event, percent: 100 } : event
+        );
       })
     : null;
   const promise = withUpdateHint(mod.download(id, url, toNativeDownloadOptions(options))).finally(
