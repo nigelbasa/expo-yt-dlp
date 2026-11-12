@@ -75,6 +75,7 @@ export default function App() {
   const [progress, setProgress] = useState<YtDlp.DownloadProgress | null>(null);
   const [checks, setChecks] = useState<CheckResult[]>([]);
   const [busy, setBusy] = useState(false);
+  const [engineUp, setEngineUp] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const task = useRef<{ cancel(): unknown } | null>(null);
 
@@ -150,8 +151,14 @@ export default function App() {
     const step = async (name: string, fn: () => Promise<string>) => {
       setChecks((list) => [...list, { name, status: 'running', detail: '' }]);
       let result: CheckResult;
+      const started = Date.now();
       try {
-        result = { name, status: 'pass', detail: await fn() };
+        const detail = await fn();
+        result = {
+          name,
+          status: 'pass',
+          detail: `${detail} · ${((Date.now() - started) / 1000).toFixed(1)}s`,
+        };
       } catch (e: any) {
         const skip =
           e.code === 'ERR_YTDLP_UPDATE_NETWORK' || e.code === 'ERR_YTDLP_UPDATE_SIGNATURE';
@@ -236,6 +243,14 @@ export default function App() {
       expect(code === 'ERR_YTDLP_CANCELLED', `ended with ${code}`);
       return 'Stopped, partial files removed';
     });
+    await step('Engine', async () => {
+      // The cancel above killed the engine; it has to come back and answer.
+      const engine = await YtDlp.warmUp();
+      expect(engine.running, 'the engine did not start');
+      const again = await YtDlp.getInfo(SAMPLE_URL);
+      expect(again.id === info?.id, 'a call through the engine returned something else');
+      return `Started in ${((engine.startupMs ?? 0) / 1000).toFixed(1)}s and answered a call`;
+    });
     await step('Update state', async () => {
       const s = YtDlp.getUpdateState();
       expect(s, 'no update state');
@@ -249,6 +264,24 @@ export default function App() {
     setBusy(false);
     refresh().catch(() => {});
   };
+
+  // Same call three ways, to see what the engine saves on this device.
+  const compareSpeed = () =>
+    run('compare speed', async () => {
+      const seconds = async (fn: () => Promise<unknown>) => {
+        const started = Date.now();
+        await fn();
+        return `${((Date.now() - started) / 1000).toFixed(1)}s`;
+      };
+      YtDlp.setEngine(false);
+      const alone = await seconds(() => YtDlp.getInfo(url));
+      YtDlp.setEngine(true);
+      const start = await seconds(() => YtDlp.warmUp());
+      const first = await seconds(() => YtDlp.getInfo(url));
+      const second = await seconds(() => YtDlp.getInfo(url));
+      setEngineUp(YtDlp.isEngineRunning());
+      return `info without engine ${alone}; engine start ${start}; info with engine ${first}, again ${second}`;
+    });
 
   const current = updates?.current;
   const passed = checks.filter((r) => r.status === 'pass').length;
@@ -324,12 +357,40 @@ export default function App() {
         </View>
       </Card>
 
+      <Card c={c} title="Engine">
+        <Text style={[styles.small, { color: c.muted }]}>
+          {engineUp ? 'Running: calls skip the startup' : 'Stopped: starts with the next call'}
+        </Text>
+        <View style={styles.row}>
+          <Btn
+            c={c}
+            title="Start"
+            onPress={() =>
+              run('engine start', async () => {
+                const state = await YtDlp.warmUp();
+                setEngineUp(state.running);
+                return state;
+              })
+            }
+          />
+          <Btn
+            c={c}
+            title="Stop"
+            onPress={() => {
+              YtDlp.shutDown();
+              setEngineUp(false);
+            }}
+          />
+          <Btn c={c} title="Compare speed" onPress={compareSpeed} />
+        </View>
+      </Card>
+
       <Card c={c} title="Self-test">
         <Btn
           c={c}
           primary
           disabled={busy}
-          title={busy ? `Running ${checks.length} of 13` : 'Run all checks'}
+          title={busy ? `Running ${checks.length} of 14` : 'Run all checks'}
           onPress={runAllChecks}
         />
         {checks.length > 0 && !busy && (

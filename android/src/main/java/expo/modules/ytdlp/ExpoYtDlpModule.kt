@@ -31,7 +31,8 @@ class ExpoYtDlpModule : Module() {
 
   private val ytDlp by lazy { YtDlpRuntime(context.applicationContext) }
   private val updater by lazy { BundleUpdater(ytDlp) { event -> sendEvent(UPDATE_EVENT, event) } }
-  private val jobs = ConcurrentHashMap<String, YtDlpProcess>()
+  private val engine by lazy { YtDlpEngine({ ytDlp.engineLaunch() }) }
+  private val jobs = ConcurrentHashMap<String, JobHandle>()
 
   override fun definition() = ModuleDefinition {
     Name("ExpoYtDlp")
@@ -83,12 +84,33 @@ class ExpoYtDlpModule : Module() {
       withContext(Dispatchers.IO) { updater.reset() }
     }
 
+    // The engine: one Python process kept running between calls (see YtDlpEngine).
+    AsyncFunction("warmUp") Coroutine { ->
+      withContext(Dispatchers.IO) {
+        val running = ytDlp.isSupported && engine.warmUp()
+        mapOf("running" to running, "startupMs" to if (running) engine.startupMs?.toDouble() else null)
+      }
+    }
+
+    Function("shutDown") {
+      engine.shutDown()
+    }
+
+    Function("setEngine") { enabled: Boolean ->
+      engine.enabled = enabled
+    }
+
+    Function("isEngineRunning") {
+      engine.isRunning
+    }
+
     Function("cancel") { id: String ->
       jobs[id]?.cancel() != null
     }
 
     OnDestroy {
       jobs.values.forEach { it.cancel() }
+      engine.shutDown()
     }
   }
 
@@ -120,12 +142,18 @@ class ExpoYtDlpModule : Module() {
     moduleArgs: List<String>,
     onLine: ((String) -> Unit)?,
   ): YtDlpProcess.Result {
-    val job = YtDlpProcess(ytDlp.processBuilder(args, module, moduleArgs))
-    if (jobs.putIfAbsent(id, job) != null) throw DuplicateJobException(id)
+    val handle = JobHandle()
+    if (jobs.putIfAbsent(id, handle) != null) throw DuplicateJobException(id)
     try {
+      if (module == RUNNER_MODULE && ytDlp.isSupported) {
+        // The running engine takes the call if it is free; otherwise it gets its own process.
+        engine.run(handle, moduleArgs + ytDlp.runtimeArgs() + args, onLine)?.let { return it }
+      }
+      val job = YtDlpProcess(ytDlp.processBuilder(args, module, moduleArgs))
+      handle.attach(job)
       return job.run(onLine)
     } finally {
-      jobs.remove(id, job)
+      jobs.remove(id, handle)
     }
   }
 

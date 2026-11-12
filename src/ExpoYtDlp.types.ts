@@ -79,6 +79,14 @@ export type UpdateResult = UpdateCheck & {
   previous: string;
 };
 
+/** The engine: the Python process that stays up between calls. See `warmUp()`. */
+export type EngineState = {
+  /** False when the engine is switched off or the installed yt-dlp has no engine support. */
+  running: boolean;
+  /** How long it took to start, in milliseconds. */
+  startupMs: number | null;
+};
+
 export type UpdateState = {
   mode: UpdateMode;
   checkIntervalHours: number;

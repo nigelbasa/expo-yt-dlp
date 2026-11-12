@@ -21,13 +21,30 @@ AAC audio-only pair (which Android's MediaMuxer can combine) is downloaded as tw
 reported under "merge"; videos without such a pair get the best single file with video.
 Selecting per video here, rather than with a format string, avoids yt-dlp's comma groups
 silently returning only one half of a pair.
+
+    python -m expo_yt_dlp_runner --serve
+
+keeps one process running for many calls, so Python and yt-dlp are started only once. It
+prints {"event": "ready"}, then reads one job per line from stdin,
+
+    {"id": "...", "argv": ["--info", "--", "--ignore-config", ..., "--", URL]}
+
+where argv is exactly what a single call takes. Jobs run one at a time. Each prints the same
+events as above and ends with
+
+    {"event": "done", "id": "...", "code": 0, "stdout": "...", "stderr": "..."}
+
+carrying what the single call would have exited with and printed. Closing stdin ends it.
 """
+import gc
 import http.client
+import io
 import json
 import os
 import ssl
 import sys
 import time
+import traceback
 
 import yt_dlp
 from yt_dlp.networking.exceptions import (
@@ -42,9 +59,13 @@ PROGRESS_INTERVAL = 0.25
 RETRY_BACKOFF = (1, 2, 4, 8)  # seconds before retry 1, 2, 3, 4+
 
 
+STDERR_TAIL_LINES = 200
+_EVENTS = sys.stdout  # the real stdout; --serve points sys.stdout at a buffer during a job
+
+
 def emit(event, **data):
-    sys.stdout.write(MARK + json.dumps({'event': event, **data}) + '\n')
-    sys.stdout.flush()
+    _EVENTS.write(MARK + json.dumps({'event': event, **data}) + '\n')
+    _EVENTS.flush()
 
 
 def short_side(fmt):
@@ -362,8 +383,48 @@ def main(argv):
         return ydl._download_retcode
 
 
+def run_captured(argv):
+    """main(argv) as a single call would behave: (exit code, stdout, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    stdout, stderr = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err  # yt-dlp picks these up when YoutubeDL is created
+    try:
+        code = main(argv) or 0
+    except yt_dlp.utils.DownloadError:
+        code = 1  # yt-dlp already wrote "ERROR: ..." to stderr
+    except SystemExit as e:  # option errors
+        if e.code is not None and not isinstance(e.code, int):
+            print(e.code, file=err)
+        code = e.code if isinstance(e.code, int) else 1
+    except Exception:
+        traceback.print_exc(file=err)
+        code = 1
+    finally:
+        sys.stdout, sys.stderr = stdout, stderr
+    tail = err.getvalue().splitlines()[-STDERR_TAIL_LINES:]
+    return code, out.getvalue(), '\n'.join(tail)
+
+
+def serve():
+    emit('ready', ytDlp=yt_dlp.version.__version__)
+    for line in sys.stdin:
+        try:
+            job = json.loads(line)
+            job_id, argv = job['id'], [str(arg) for arg in job['argv']]
+        except (ValueError, KeyError, TypeError):
+            continue
+        started = time.monotonic()
+        code, out, err = run_captured(argv)
+        emit('done', id=job_id, code=code, stdout=out, stderr=err,
+             seconds=round(time.monotonic() - started, 3))
+        gc.collect()  # info dicts are large; don't let them pile up between jobs
+
+
 if __name__ == '__main__':
     try:
+        if sys.argv[1:] == ['--serve']:
+            serve()
+            sys.exit(0)
         sys.exit(main(sys.argv[1:]))
     except yt_dlp.utils.DownloadError:
         sys.exit(1)  # yt-dlp already printed "ERROR: ..." to stderr

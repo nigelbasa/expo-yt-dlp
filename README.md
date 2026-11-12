@@ -80,6 +80,28 @@ Every function takes a URL from any supported site. All options are optional.
 | `isSupported()` | `boolean` | Whether the runtime can run on this device and build. Synchronous. |
 | `prepare()` | `Promise<RuntimeInfo>` | Unpacks the runtime ahead of time. Returns the bundled versions of Python, yt-dlp and QuickJS, whether ffmpeg is bundled, the ABI, and the extractor list. |
 
+### The engine: faster calls
+
+yt-dlp is a Python program, and starting Python and loading yt-dlp takes a while on a phone.
+So the package keeps one Python process running between calls, the engine. You don't have
+to do anything: the first call starts it and later calls reuse it.
+
+```ts
+YtDlp.warmUp(); // optional, when your app or screen opens: the first call won't wait for startup
+```
+
+| Function | Returns | |
+| --- | --- | --- |
+| `warmUp()` | `Promise<EngineState>` | Starts the engine ahead of the first call. `{ running, startupMs }`. |
+| `shutDown()` | `void` | Stops the engine and frees its memory. The next call starts it again. |
+| `setEngine(enabled)` | `void` | `false` makes every call start its own process. On by default. |
+| `isEngineRunning()` | `boolean` | Whether the engine is up right now. |
+
+The engine runs one call at a time. A call made while it is busy (a second download, say)
+runs in its own process, so nothing waits in a queue. Cancelling a call stops the engine;
+the next call starts a new one. It stops itself after five idle minutes, and restarts after a
+yt-dlp update. `exec()` always runs in its own process.
+
 ### Looking things up (nothing is downloaded)
 
 | Function | Returns | |

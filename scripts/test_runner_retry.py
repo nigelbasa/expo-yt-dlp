@@ -19,7 +19,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SITE_ZIP = ROOT / 'android' / 'src' / 'main' / 'assets' / 'expo-yt-dlp' / 'site-packages.zip'
+# EYD_SITE_ZIP: test another build, e.g. dist/bundle/site-packages.zip from --bundle-only.
+SITE_ZIP = Path(os.environ.get('EYD_SITE_ZIP')
+                or ROOT / 'android' / 'src' / 'main' / 'assets' / 'expo-yt-dlp' / 'site-packages.zip')
 
 PAGE = b'<html><head><title>retry test</title></head><body><video src="/clip.mp4"></video></body></html>'
 CLIP = b'\x00' * 4096
@@ -130,6 +132,62 @@ def main() -> None:
         check('gives up after --network-retries',
               r.returncode != 0 and r.stderr.count('retrying') == 2 and Handler.hits.get('/e.html') == 3,
               f'exit={r.returncode} hits={Handler.hits}')
+
+        # 6. --serve: one process, several jobs, each answered like a single call.
+        env = {**os.environ, 'PYTHONPATH': str(site), 'PYTHONUTF8': '1'}
+        engine = subprocess.Popen([sys.executable, '-S', '-m', 'expo_yt_dlp_runner', '--serve'], env=env,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, encoding='utf-8')
+
+        def next_event():
+            for line in engine.stdout:
+                if line.startswith('__EYD__'):
+                    return json.loads(line[len('__EYD__'):])
+            return {}
+
+        def job(job_id, runner_args, url, ytdlp_args=()):
+            argv = [*runner_args, '--', '--ignore-config', '-P', str(out), *ytdlp_args, '--', url]
+            engine.stdin.write(json.dumps({'id': job_id, 'argv': argv}) + '\n')
+            engine.stdin.flush()
+            events = []
+            while not events or events[-1].get('event') not in ('done', None):
+                events.append(next_event())
+            return events
+
+        check('engine reports ready', next_event().get('event') == 'ready')
+
+        Handler.faults, Handler.hits = {'/f.html': ['drop', 1]}, {}
+        *_, done = job('one', ['--info', '--network-retries', '3'], f'{base}/f.html')
+        info = json.loads(done['stdout']) if done.get('code') == 0 else {}
+        check('engine: info job returns the info and its retry log',
+              done.get('id') == 'one' and str(info.get('title')).startswith('retry test')
+              and done.get('stderr', '').count('retrying') == 1, f'done={str(done)[:300]}')
+
+        Handler.faults, Handler.hits = {'/g.html': ['drop', 1]}, {}
+        events = job('two', ['--network-retries', '3'], f'{base}/g.html')
+        result = next((e for e in events if e['event'] == 'result'), None)
+        files = [f['path'] for item in (result or {}).get('items', []) for f in item['files']]
+        check('engine: download job emits events, then done',
+              events[-1].get('code') == 0 and any(e['event'] == 'retry' for e in events)
+              and any(e['event'] == 'progress' for e in events) and files and Path(files[0]).exists(),
+              f'events={[e.get("event") for e in events]} done={str(events[-1])[:300]}')
+
+        Handler.faults, Handler.hits = {'/h.html': [403, 99]}, {}
+        *_, done = job('three', ['--info', '--network-retries', '3'], f'{base}/h.html')
+        check('engine: a failed job reports its error and the engine keeps going',
+              done.get('code') == 1 and 'ERROR:' in done.get('stderr', ''),
+              f'done={str(done)[:300]}')
+
+        *_, done = job('four', ['--info'], f'{base}/a.html', ('--no-such-option',))
+        check('engine: a bad option fails only that job',
+              done.get('code') != 0 and 'no such option' in done.get('stderr', ''), f'done={str(done)[:300]}')
+
+        Handler.faults, Handler.hits = {}, {}
+        *_, done = job('five', ['--info'], f'{base}/a.html')
+        check('engine: still answers after failures', done.get('code') == 0 and done.get('id') == 'five')
+
+        engine.stdin.close()
+        check('engine exits when stdin closes', engine.wait(timeout=30) == 0)
 
     server.shutdown()
     sys.exit(1 if failures else 0)

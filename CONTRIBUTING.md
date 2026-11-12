@@ -14,6 +14,11 @@ JS (src/index.ts) ─ options → yt-dlp arguments
                                         └─ spawns libffmpeg.so                  (optional)
 ```
 
+`getInfo` and `download` normally go to the engine instead: one `expo_yt_dlp_runner --serve`
+process that stays up and takes jobs as JSON lines on its input (`YtDlpEngine.kt`). When it is
+busy, switched off or missing from an older yt-dlp bundle, the call gets a process of its own
+as drawn above.
+
 - **Python.** python.org's official Android build of CPython ships only as an embeddable
   `libpython`. [`native/python-launcher`](native/python-launcher/main.c) is a 10-line `main()`
   linked against it, which gives yt-dlp a normal `python` to run under.
@@ -119,7 +124,7 @@ entirely isn't supported (all ~1,800 extractors would add several MB).
 | `npm run build:runtime` | Builds `android/src/main/jniLibs` and `assets/expo-yt-dlp`. `--python-only` skips the NDK builds. |
 | `npm test` | Unit tests for the TypeScript layer (jest). |
 | `npm run test:updates` | Offline tests of yt-dlp updates: the feed tooling (signing, key rotation) and the app's own verification and state logic, compiled with `kotlinc` and run on the JVM against really-signed feeds. |
-| `npm run test:runtime` | Offline checks of the built bundle: the trimmed yt-dlp imports and runs on the stripped stdlib, and network retries behave (local test server). |
+| `npm run test:runtime` | Offline checks of the built bundle: the trimmed yt-dlp imports and runs on the stripped stdlib, network retries behave, and the engine (one Python process kept up between calls: `YtDlpEngine.kt` with the runner's `--serve` mode) runs, cancels, restarts and falls back as it should, on the JVM against a local test server. |
 | `npm run test:online` | Resolves, plans and downloads from the real sites using the bundled runtime. Can fail for reasons outside this repo (bot checks, rate limits). |
 | `python scripts/device_smoke_test.py -- -J <url>` | Pushes the runtime to a connected device or emulator over `adb` and runs yt-dlp there, without building an app. |
 | `cd example && npx expo run:android` | The example app, which exercises every function. |
