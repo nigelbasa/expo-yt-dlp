@@ -391,8 +391,10 @@ export default function App() {
           <>
             <Bar c={c} fraction={(progress.percent ?? 0) / 100} />
             <Text style={[styles.small, { color: c.muted }]}>
-              {progress.status} {progress.formatId ?? ''} {progress.percent?.toFixed(1) ?? '?'}%{' '}
-              {progress.speed ? `${(progress.speed / 1e6).toFixed(2)} MB/s` : ''}
+              {progress.status}
+              {progress.percent != null ? ` · ${progress.percent.toFixed(0)}%` : ''}
+              {progress.speed ? ` · ${(progress.speed / 1e6).toFixed(2)} MB/s` : ''}
+              {progress.formatId ? ` · format ${progress.formatId}` : ''}
             </Text>
           </>
         )}

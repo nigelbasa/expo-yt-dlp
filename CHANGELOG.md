@@ -14,6 +14,7 @@ yt-dlp available that day; the exact versions are listed in its
   saving it.
 - **More sites.** TikTok and Twitter/X join YouTube, Facebook and Instagram.
 - `prepare()` now also reports `source`, `bundleId` and `runtimeApi`.
+- Download progress always ends at 100%; the last event used to arrive without a percentage.
 - A failed call (`ERR_YTDLP`) carries `updateAvailable` when a newer yt-dlp might fix it.
 
 No breaking changes. Rebuild the native app after upgrading.

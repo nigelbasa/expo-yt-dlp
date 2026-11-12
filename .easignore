@@ -1,0 +1,14 @@
+# What EAS Build uploads when building the example app (it replaces .gitignore for that).
+# Unlike .gitignore, the built runtime (android/src/main/jniLibs and assets/expo-yt-dlp) is
+# NOT ignored: the cloud build has no NDK step, so it needs the files built here or by CI.
+node_modules/
+.git/
+.cache/
+dist/
+build/
+docs/
+.expo/
+example/android/
+example/ios/
+*.pem
+*.tgz
