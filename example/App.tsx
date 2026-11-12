@@ -185,7 +185,12 @@ export default function App() {
     });
     await step('Raw command', async () => {
       const r = await YtDlp.exec(['--version']);
-      expect(r.exitCode === 0 && r.stdout.trim() === version, `got "${r.stdout.trim()}"`);
+      // yt-dlp prints 2026.08.19 where the package reports 2026.8.19: compare the numbers.
+      const numbers = (v: string) => v.trim().split('.').map(Number).join('.');
+      expect(
+        r.exitCode === 0 && numbers(r.stdout) === numbers(version),
+        `got "${r.stdout.trim()}", expected ${version}`
+      );
       return r.stdout.trim();
     });
     await step('Video info', async () => {
