@@ -1,6 +1,6 @@
 // JVM tests for UpdateFeed.kt and UpdateStore.kt, run by scripts/test_update_logic.py against
 // feeds signed by the real tooling (scripts/publish_bundle.py).
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import org.json.JSONObject
 import java.io.File

@@ -67,6 +67,15 @@ jobs:
       # --provenance links each version to this workflow run and commit (needs a public repo).
       - run: npm publish --access public --provenance
 
+      # The Kotlin library ships the same runtime (see the maven job).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-runtime
+          retention-days: 7
+          path: |
+            android/src/main/jniLibs
+            android/src/main/assets/expo-yt-dlp
+
       - name: GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -87,3 +96,33 @@ jobs:
           print(f"- Extractors: {', '.join(p['extractors'])} (+ generic)")
           EOF
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+
+  # The Kotlin library (io.github.nigelbasa:ytdlp-android), same version and runtime as the npm
+  # package. The Maven Central token and the signing key are secrets of the maven-central
+  # environment; see CONTRIBUTING.md.
+  maven:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-runtime
+          path: android/src/main
+      - name: Publish to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_SIGNING_KEY_PASSWORD }}
+        run: gradle -p kotlin publishToMavenCentral --no-daemon --no-configuration-cache

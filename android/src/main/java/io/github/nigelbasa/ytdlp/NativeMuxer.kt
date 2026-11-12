@@ -1,4 +1,4 @@
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import android.media.MediaCodec
 import android.media.MediaExtractor

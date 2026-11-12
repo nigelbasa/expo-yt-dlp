@@ -22,6 +22,7 @@ the sites you need, and wraps them in a typed JS API. Anything the wrapper doesn
 - [Recipes](docs/recipes.md): sizes, audio, subtitles, playlists, batches, cancelling, gallery, cookies
 - [Contributing](CONTRIBUTING.md): how it works, building, updating yt-dlp, releasing
 - [Changelog](CHANGELOG.md)
+- Not using Expo? The same thing for Kotlin apps: [ytdlp-android](kotlin/README.md) on Maven Central
 
 ## Install
 

@@ -1,4 +1,4 @@
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import java.io.IOException
 import java.util.ArrayDeque

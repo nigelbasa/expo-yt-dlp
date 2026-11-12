@@ -1,4 +1,4 @@
-package expo.modules.ytdlp
+package io.github.nigelbasa.ytdlp
 
 import android.content.Context
 import android.os.Build
@@ -168,7 +168,8 @@ internal class YtDlpRuntime(private val context: Context) {
       return "expo-yt-dlp supports $bundledAbis; this device is $deviceAbi."
     }
     return "The bundled binaries were not extracted to ${nativeDir.path}. Add \"expo-yt-dlp\" to the " +
-      "plugins in app.json (it sets expo.useLegacyPackaging=true) and rebuild the app."
+      "plugins in app.json (it sets expo.useLegacyPackaging=true), or in a Kotlin app set " +
+      "android { packaging { jniLibs { useLegacyPackaging = true } } }, and rebuild the app."
   }
 
   /**
