@@ -96,8 +96,11 @@ fun main(args: Array<String>) {
   // A yt-dlp bundle from before the engine existed: its runner rejects --serve.
   val old = YtDlpEngine({ launch(python, "-c", "import sys; sys.exit('expo_yt_dlp_runner: unknown option --serve')") })
   check("an older bundle: no engine, calls are turned away", !old.warmUp() && old.run(JobHandle(), argv("$base/a.html")) == null)
+  check("and says why", old.startFailure?.contains("before the engine existed") == true, "reason=${old.startFailure}")
   val missing = YtDlpEngine({ launch(File(out, "no-such-python").path) })
   check("a runtime that won't start: calls are turned away", missing.run(JobHandle(), argv("$base/a.html")) == null)
+  check("and says why", missing.startFailure?.contains("could not be started") == true, "reason=${missing.startFailure}")
+  check("no failure reason once started", engine.startFailure == null)
 
   // The yt-dlp in use changed (an update was installed): the engine restarts for it.
   var key = "first"

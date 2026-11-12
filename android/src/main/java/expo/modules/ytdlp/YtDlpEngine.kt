@@ -82,6 +82,11 @@ internal class YtDlpEngine(
   var startupMs: Long? = null
     private set
 
+  /** Why the last attempt to start the engine failed, in a sentence; null once it has started. */
+  @Volatile
+  var startFailure: String? = null
+    private set
+
   @Volatile
   var enabled = true
     set(value) {
@@ -172,6 +177,7 @@ internal class YtDlpEngine(
       wanted.builder.redirectErrorStream(true).start()
     } catch (e: IOException) {
       withoutEngine += wanted.key
+      startFailure = "The engine process could not be started: ${e.message}"
       return null
     }
     val candidate = Session(wanted.key, proc)
@@ -181,9 +187,16 @@ internal class YtDlpEngine(
       }
     }
     timer.schedule(watchdog, startTimeoutMs)
+    val said = ArrayDeque<String>() // what it printed instead of "ready", for the failure message
     val ready = try {
-      generateSequence { candidate.output.readLine() }
-        .any { parseEvent(it)?.optString("event") == "ready" }
+      generateSequence { candidate.output.readLine() }.any { line ->
+        val isReady = parseEvent(line)?.optString("event") == "ready"
+        if (!isReady && line.isNotBlank()) {
+          said.addLast(line)
+          if (said.size > FAILURE_LINES) said.removeFirst()
+        }
+        isReady
+      }
     } catch (e: IOException) {
       false
     } finally {
@@ -194,8 +207,15 @@ internal class YtDlpEngine(
       // Either way the single-process path deals with it, and reports it properly.
       withoutEngine += wanted.key
       kill(proc)
+      startFailure = when {
+        said.any { "unknown option --serve" in it } ->
+          "The yt-dlp in use was built before the engine existed. Calls run in their own process until the next yt-dlp update."
+        said.isEmpty() -> "The engine did not answer within ${startTimeoutMs / 1000} seconds."
+        else -> "The engine did not start: ${said.joinToString("\n")}"
+      }
       return null
     }
+    startFailure = null
     stopAfterJob = false
     startupMs = (System.nanoTime() - started) / 1_000_000
     process = proc
@@ -255,5 +275,6 @@ internal class YtDlpEngine(
   private companion object {
     const val EVENT_MARK = "__EYD__"
     const val KILL_GRACE_SECONDS = 3L
+    const val FAILURE_LINES = 5
   }
 }

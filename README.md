@@ -92,7 +92,7 @@ YtDlp.warmUp(); // optional, when your app or screen opens: the first call won't
 
 | Function | Returns | |
 | --- | --- | --- |
-| `warmUp()` | `Promise<EngineState>` | Starts the engine ahead of the first call. `{ running, startupMs }`. |
+| `warmUp()` | `Promise<EngineState>` | Starts the engine ahead of the first call. `{ running, startupMs, reason }`; `reason` says why when it isn't running. |
 | `shutDown()` | `void` | Stops the engine and frees its memory. The next call starts it again. |
 | `setEngine(enabled)` | `void` | `false` makes every call start its own process. On by default. |
 | `isEngineRunning()` | `boolean` | Whether the engine is up right now. |

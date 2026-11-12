@@ -85,6 +85,8 @@ export type EngineState = {
   running: boolean;
   /** How long it took to start, in milliseconds. */
   startupMs: number | null;
+  /** When not running: why, as a sentence. Calls still work, each in its own process. */
+  reason: string | null;
 };
 
 export type UpdateState = {

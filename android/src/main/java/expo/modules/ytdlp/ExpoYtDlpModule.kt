@@ -88,7 +88,16 @@ class ExpoYtDlpModule : Module() {
     AsyncFunction("warmUp") Coroutine { ->
       withContext(Dispatchers.IO) {
         val running = ytDlp.isSupported && engine.warmUp()
-        mapOf("running" to running, "startupMs" to if (running) engine.startupMs?.toDouble() else null)
+        mapOf(
+          "running" to running,
+          "startupMs" to if (running) engine.startupMs?.toDouble() else null,
+          "reason" to when {
+            running -> null
+            !ytDlp.isSupported -> "yt-dlp can't run on this device."
+            !engine.enabled -> "The engine is switched off."
+            else -> engine.startFailure
+          },
+        )
       }
     }
 

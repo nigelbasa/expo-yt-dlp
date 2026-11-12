@@ -246,7 +246,7 @@ export default function App() {
     await step('Engine', async () => {
       // The cancel above killed the engine; it has to come back and answer.
       const engine = await YtDlp.warmUp();
-      expect(engine.running, 'the engine did not start');
+      expect(engine.running, engine.reason ?? 'the engine did not start');
       const again = await YtDlp.getInfo(SAMPLE_URL);
       expect(again.id === info?.id, 'a call through the engine returned something else');
       return `Started in ${((engine.startupMs ?? 0) / 1000).toFixed(1)}s and answered a call`;
