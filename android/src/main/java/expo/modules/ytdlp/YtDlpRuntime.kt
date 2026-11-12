@@ -176,19 +176,35 @@ internal class YtDlpRuntime(private val context: Context) {
    * before the yt-dlp options, which always start with the fixed runtime flags.
    */
   fun processBuilder(args: List<String>, module: String = "yt_dlp", moduleArgs: List<String> = emptyList()): ProcessBuilder {
-    val bundled = ensureInstalled().sitePackages // first: reports an unsupported device properly
-    val command = mutableListOf(python.absolutePath, "-m", module)
-    command += moduleArgs
-    command += listOf("--ignore-config", "--color", "never", "--cache-dir", File(cacheDir, "yt-dlp").path)
+    val sitePackages = activeSitePackages() // first: reports an unsupported device properly
+    val command = listOf(python.absolutePath, "-m", module) + moduleArgs + runtimeArgs() + args
+    return pythonProcess(command, sitePackages)
+  }
+
+  /** The yt-dlp options every call starts with. */
+  fun runtimeArgs(): List<String> {
+    val args = mutableListOf("--ignore-config", "--color", "never", "--cache-dir", File(cacheDir, "yt-dlp").path)
     if (hasJsRuntime) {
-      command += listOf("--no-js-runtimes", "--js-runtimes", "quickjs:${quickJs.absolutePath}")
+      args += listOf("--no-js-runtimes", "--js-runtimes", "quickjs:${quickJs.absolutePath}")
     }
     if (hasFfmpeg) {
       // yt-dlp finds ffprobe by replacing "ffmpeg" in this file name: libffprobe.so.
-      command += listOf("--ffmpeg-location", ffmpeg.absolutePath)
+      args += listOf("--ffmpeg-location", ffmpeg.absolutePath)
     }
-    command += args
-    return pythonProcess(command, store.activeBundle()?.second ?: bundled)
+    return args
+  }
+
+  /** The yt-dlp in use: a downloaded bundle if there is one, otherwise the one shipped in the app. */
+  private fun activeSitePackages(): File {
+    val bundled = ensureInstalled().sitePackages
+    return store.activeBundle()?.second ?: bundled
+  }
+
+  /** The long-running process behind [YtDlpEngine], for the yt-dlp in use right now. */
+  fun engineLaunch(): YtDlpEngine.Launch {
+    val sitePackages = activeSitePackages()
+    val command = listOf(python.absolutePath, "-m", "expo_yt_dlp_runner", "--serve")
+    return YtDlpEngine.Launch(sitePackages.path, pythonProcess(command, sitePackages))
   }
 
   /**

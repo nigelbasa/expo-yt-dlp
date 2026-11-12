@@ -8,6 +8,7 @@ import {
   DownloadEstimate,
   DownloadOptions,
   DownloadTask,
+  EngineState,
   ExecResult,
   FormatSummary,
   InfoOptions,
@@ -347,6 +348,33 @@ export function updateYtDlp(
 /** Goes back to the yt-dlp shipped inside the app and forgets the downloaded one. */
 export function resetToBundled(): Promise<UpdateState> {
   return nativeModule().resetToBundled();
+}
+
+/**
+ * Starts the engine now, so the first call doesn't wait for it: call this when the app (or
+ * the screen that uses yt-dlp) opens. Optional: without it, the first call starts the engine.
+ *
+ * The engine is one Python process with yt-dlp loaded that stays up between calls. `getInfo`,
+ * `download` and everything built on them use it when it is free, and run in a process of
+ * their own when it is busy. It stops itself after five idle minutes.
+ */
+export function warmUp(): Promise<EngineState> {
+  return nativeModule().warmUp();
+}
+
+/** Stops the engine and frees its memory. The next call starts it again. */
+export function shutDown(): void {
+  ExpoYtDlpModule?.shutDown();
+}
+
+/** `setEngine(false)` makes every call start its own process, as before 0.3.0. On by default. */
+export function setEngine(enabled: boolean): void {
+  ExpoYtDlpModule?.setEngine(enabled);
+}
+
+/** Whether the engine is up right now. */
+export function isEngineRunning(): boolean {
+  return ExpoYtDlpModule?.isEngineRunning() ?? false;
 }
 
 /**

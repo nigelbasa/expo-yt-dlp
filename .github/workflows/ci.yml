@@ -47,8 +47,10 @@ jobs:
         run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" python scripts/build_android_runtime.py
       - name: Import check of the stripped stdlib + trimmed yt-dlp
         run: python scripts/host_smoke_test.py -- --list-extractors
-      - name: Network retry tests (local server, no internet)
-        run: python scripts/test_runner_retry.py
+      - name: Network retry and engine tests (local server, no internet)
+        run: |
+          python scripts/test_runner_retry.py
+          python scripts/test_engine.py
       - name: yt-dlp update feed (signing tool, app-side verification on the JVM)
         run: |
           python scripts/test_publish_bundle.py

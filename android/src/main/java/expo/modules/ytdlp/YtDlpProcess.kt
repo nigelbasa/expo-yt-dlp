@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /** One yt-dlp child process. stdout and stderr are drained concurrently so large `-J` output can't deadlock. */
-internal class YtDlpProcess(private val builder: ProcessBuilder) {
+internal class YtDlpProcess(private val builder: ProcessBuilder) : Cancellable {
   class Result(val exitCode: Int, val stdout: String, val stderr: String)
 
   @Volatile
@@ -62,7 +62,7 @@ internal class YtDlpProcess(private val builder: ProcessBuilder) {
    * SIGTERM, then SIGKILL after a grace period. Grandchildren (QuickJS, ffmpeg) are not
    * signalled; they are short-lived and exit on their own.
    */
-  fun cancel() {
+  override fun cancel() {
     val proc = synchronized(this) {
       isCancelled = true
       process

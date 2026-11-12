@@ -2,6 +2,7 @@ import { NativeModule, requireOptionalNativeModule } from 'expo';
 
 import {
   DownloadItem,
+  EngineState,
   ExecResult,
   ExpoYtDlpModuleEvents,
   RuntimeInfo,
@@ -54,6 +55,10 @@ declare class ExpoYtDlpModule extends NativeModule<ExpoYtDlpModuleEvents> {
   checkForUpdate(): Promise<UpdateCheck>;
   updateYtDlp(): Promise<UpdateResult>;
   resetToBundled(): Promise<UpdateState>;
+  warmUp(): Promise<EngineState>;
+  shutDown(): void;
+  setEngine(enabled: boolean): void;
+  isEngineRunning(): boolean;
 }
 
 // Android only for now; null on iOS and web.

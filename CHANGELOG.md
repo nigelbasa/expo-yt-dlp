@@ -4,6 +4,18 @@ What changed in each version of `expo-yt-dlp`. Every release also bundles the ne
 yt-dlp available that day; the exact versions are listed in its
 [GitHub release](https://github.com/nigelbasa/expo-yt-dlp/releases).
 
+## 0.3.0
+
+- **Faster calls.** One Python process with yt-dlp loaded, the engine, now stays up between
+  calls instead of starting for each one. Nothing to change in your code: the first call
+  starts it. `warmUp()` starts it ahead of time, `shutDown()` stops it, and
+  `setEngine(false)` goes back to one process per call.
+- A call made while the engine is busy runs in its own process, as before, so parallel
+  downloads still work.
+
+No breaking changes. Rebuild the native app after upgrading. A yt-dlp downloaded as an update
+before this release keeps working, in one process per call, until the next yt-dlp update.
+
 ## 0.2.0
 
 - **yt-dlp updates without an app release.** `setUpdates('auto')` lets an installed app fetch
