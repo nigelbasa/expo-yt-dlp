@@ -4,6 +4,7 @@
     "slug": "expo-yt-dlp-example",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "expoytdlpexample",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {

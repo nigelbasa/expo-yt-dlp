@@ -102,12 +102,14 @@ jobs:
             if (leaked.length) { console.error("should not be published:", leaked); process.exit(1); }
           '
 
-  example-app:
-    name: Example app (Gradle build)
-    # Slow (~10 min), so only for PRs and manual runs.
+  emulator:
+    name: Example app on an Android emulator
+    # Slow (~20 min), so only for PRs and manual runs. YouTube blocks GitHub's servers, so the
+    # app's self-test runs against a local clip; the live sites are tested from a real network.
     if: github.event_name != 'push'
     needs: runtime
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -128,5 +130,34 @@ jobs:
         working-directory: example
         env:
           CI: 1
-      - run: ./gradlew assembleDebug -PreactNativeArchitectures=x86_64 --no-daemon
+      # Release build: the JS is bundled in, so no Metro server is needed. Signed with the debug key.
+      - run: ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
         working-directory: example/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: example-app-x86_64
+          retention-days: 7
+          path: example/android/app/build/outputs/apk/release/app-release.apk
+      - name: Install ffmpeg (makes the test clip)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the self-test on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: python3 scripts/emulator_selftest.py example/android/app/build/outputs/apk/release/app-release.apk
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-logcat
+          retention-days: 7
+          path: emulator-logcat.txt
+          if-no-files-found: ignore

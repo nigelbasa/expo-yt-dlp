@@ -50,6 +50,16 @@ type Palette = (typeof PALETTES)['light'];
 
 type CheckResult = { name: string; status: 'running' | 'pass' | 'fail' | 'skip'; detail: string };
 
+/**
+ * expoytdlpexample://selftest?base=http://10.0.2.2:8765 runs the checks at launch against a
+ * local test server instead of YouTube (used by the emulator job in CI, where YouTube blocks
+ * GitHub's servers) and logs one "SELFTEST {...}" line to logcat at the end.
+ */
+const selfTestBase = (link: string | null) => {
+  const match = link?.startsWith('expoytdlpexample://selftest') && /[?&]base=([^&]+)/.exec(link);
+  return match ? decodeURIComponent(match[1]) : null;
+};
+
 const mb = (bytes: number | null | undefined) =>
   bytes == null ? '?' : `${(bytes / 1e6).toFixed(1)} MB`;
 const ago = (time: number | null | undefined) => {
@@ -107,6 +117,14 @@ export default function App() {
     return () => sub.remove();
   }, [append, refresh]);
 
+  useEffect(() => {
+    Linking.getInitialURL().then((link) => {
+      const base = selfTestBase(link);
+      if (base) runAllChecks(base);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const run = async (label: string, fn: () => Promise<unknown> | unknown) => {
     const started = Date.now();
     append(`${label}...`);
@@ -145,14 +163,18 @@ export default function App() {
     run(label, fn).then(refresh);
 
   // One tap: exercises every function of the package and lists what passed.
-  const runAllChecks = async () => {
+  // With a local server base (CI), checks that need a real site are skipped.
+  const runAllChecks = async (base: string | null = null) => {
     setBusy(true);
     setChecks([]);
-    const step = async (name: string, fn: () => Promise<string>) => {
+    const sample = base ? `${base}/clip.mp4` : SAMPLE_URL;
+    const results: CheckResult[] = [];
+    const step = async (name: string, fn: () => Promise<string>, needsSite = false) => {
       setChecks((list) => [...list, { name, status: 'running', detail: '' }]);
       let result: CheckResult;
       const started = Date.now();
       try {
+        if (needsSite && base) throw Object.assign(new Error('needs a real site'), { skip: true });
         const detail = await fn();
         result = {
           name,
@@ -161,7 +183,9 @@ export default function App() {
         };
       } catch (e: any) {
         const skip =
-          e.code === 'ERR_YTDLP_UPDATE_NETWORK' || e.code === 'ERR_YTDLP_UPDATE_SIGNATURE';
+          e.skip ||
+          e.code === 'ERR_YTDLP_UPDATE_NETWORK' ||
+          e.code === 'ERR_YTDLP_UPDATE_SIGNATURE';
         result = {
           name,
           status: skip ? 'skip' : 'fail',
@@ -169,6 +193,7 @@ export default function App() {
         };
       }
       append(`check ${result.status}: ${name} ${result.detail}`);
+      results.push(result);
       setChecks((list) => [...list.slice(0, -1), result]);
     };
     const expect = (ok: unknown, message: string) => {
@@ -194,52 +219,78 @@ export default function App() {
       return r.stdout.trim();
     });
     await step('Video info', async () => {
-      info = await YtDlp.getInfo(SAMPLE_URL);
+      info = await YtDlp.getInfo(sample);
       expect(info.formats?.length, 'no formats');
       return `"${info.title}", ${info.formats!.length} formats`;
     });
     await step('Formats and subtitles', async () => {
-      const formats = await YtDlp.getFormats(info ?? SAMPLE_URL);
-      const subs = await YtDlp.getSubtitles(info ?? SAMPLE_URL);
+      const formats = await YtDlp.getFormats(info ?? sample);
+      const subs = await YtDlp.getSubtitles(info ?? sample);
       expect(formats.length, 'no formats');
       return `${formats.length} formats, best ${formats[0].resolution}, ${subs.length} subtitle tracks`;
     });
-    await step('Stream link', async () => {
-      const video = await YtDlp.getStream(info ?? SAMPLE_URL);
-      const audio = await YtDlp.getStream(info ?? SAMPLE_URL, { audioOnly: true });
-      expect(video.url.startsWith('http') && audio.url.startsWith('http'), 'no link');
-      return `video ${video.kind} ${video.height}p, audio ${audio.ext}`;
-    });
-    await step('Size estimate', async () => {
-      const e = await YtDlp.estimateDownload(SAMPLE_URL, { maxHeight: 360 });
-      expect(e.items.length, 'no items');
-      return `${mb(e.totalSize)}${e.sizeIsEstimate ? ' (estimated)' : ''}`;
-    });
-    await step('Search', async () => {
-      const results = await YtDlp.search('blender open movie', { limit: 2 });
-      expect(results.length === 2, `${results.length} results`);
-      return results.map((r) => r.title).join(' | ');
-    });
+    await step(
+      'Stream link',
+      async () => {
+        const video = await YtDlp.getStream(info ?? SAMPLE_URL);
+        const audio = await YtDlp.getStream(info ?? SAMPLE_URL, { audioOnly: true });
+        expect(video.url.startsWith('http') && audio.url.startsWith('http'), 'no link');
+        return `video ${video.kind} ${video.height}p, audio ${audio.ext}`;
+      },
+      true
+    );
+    await step(
+      'Size estimate',
+      async () => {
+        const e = await YtDlp.estimateDownload(SAMPLE_URL, { maxHeight: 360 });
+        expect(e.items.length, 'no items');
+        return `${mb(e.totalSize)}${e.sizeIsEstimate ? ' (estimated)' : ''}`;
+      },
+      true
+    );
+    await step(
+      'Search',
+      async () => {
+        const found = await YtDlp.search('blender open movie', { limit: 2 });
+        expect(found.length === 2, `${found.length} results`);
+        return found.map((r) => r.title).join(' | ');
+      },
+      true
+    );
     await step('Download video', async () => {
-      const r = await YtDlp.download(SAMPLE_URL, { maxHeight: 360, onProgress }).promise;
+      // The local clip has no height, so no cap there.
+      const r = await YtDlp.download(sample, { maxHeight: base ? undefined : 360, onProgress })
+        .promise;
       expect(r.files.length === 1, `${r.files.length} files`);
       return r.files[0];
     });
-    await step('Download audio', async () => {
-      const r = await YtDlp.download(SAMPLE_URL, { audioOnly: true, onProgress }).promise;
-      expect(r.files.length === 1, `${r.files.length} files`);
-      return r.files[0];
-    });
-    await step('Subtitles and thumbnail', async () => {
-      const subs = await YtDlp.downloadSubtitles(SAMPLE_URL, { languages: ['en'] }).promise;
-      const thumb = await YtDlp.downloadThumbnail(SAMPLE_URL).promise;
-      const count = (r: typeof subs, key: 'subtitles' | 'thumbnails') =>
-        r.items.reduce((n, item: any) => n + (item[key]?.length ?? 0), 0);
-      expect(count(subs, 'subtitles') && count(thumb, 'thumbnails'), 'nothing written');
-      return `${count(subs, 'subtitles')} subtitle file, ${count(thumb, 'thumbnails')} thumbnail`;
-    });
+    await step(
+      'Download audio',
+      async () => {
+        const r = await YtDlp.download(SAMPLE_URL, { audioOnly: true, onProgress }).promise;
+        expect(r.files.length === 1, `${r.files.length} files`);
+        return r.files[0];
+      },
+      true
+    );
+    await step(
+      'Subtitles and thumbnail',
+      async () => {
+        const subs = await YtDlp.downloadSubtitles(SAMPLE_URL, { languages: ['en'] }).promise;
+        const thumb = await YtDlp.downloadThumbnail(SAMPLE_URL).promise;
+        const count = (r: typeof subs, key: 'subtitles' | 'thumbnails') =>
+          r.items.reduce((n, item: any) => n + (item[key]?.length ?? 0), 0);
+        expect(count(subs, 'subtitles') && count(thumb, 'thumbnails'), 'nothing written');
+        return `${count(subs, 'subtitles')} subtitle file, ${count(thumb, 'thumbnails')} thumbnail`;
+      },
+      true
+    );
     await step('Cancel', async () => {
-      const t = YtDlp.download(SAMPLE_URL, { maxHeight: 720 });
+      // The local /slow.mp4 trickles out, so it is still running when cancelled.
+      const t = YtDlp.download(
+        base ? `${base}/slow.mp4` : SAMPLE_URL,
+        base ? {} : { maxHeight: 720 }
+      );
       setTimeout(() => t.cancel(), 1500);
       const code = await t.promise.then(
         () => 'finished',
@@ -252,7 +303,7 @@ export default function App() {
       // The cancel above killed the engine; it has to come back and answer.
       const engine = await YtDlp.warmUp();
       expect(engine.running, engine.reason ?? 'the engine did not start');
-      const again = await YtDlp.getInfo(SAMPLE_URL);
+      const again = await YtDlp.getInfo(sample);
       expect(again.id === info?.id, 'a call through the engine returned something else');
       return `Started in ${((engine.startupMs ?? 0) / 1000).toFixed(1)}s and answered a call`;
     });
@@ -265,6 +316,11 @@ export default function App() {
       const check = await YtDlp.checkForUpdate();
       return check.latest ? `${check.status}: ${check.latest.ytDlp}` : check.status;
     });
+    const count = (status: CheckResult['status']) =>
+      results.filter((r) => r.status === status).length;
+    append(
+      `SELFTEST ${JSON.stringify({ pass: count('pass'), fail: count('fail'), skip: count('skip') })}`
+    );
     setProgress(null);
     setBusy(false);
     refresh().catch(() => {});
@@ -396,7 +452,7 @@ export default function App() {
           primary
           disabled={busy}
           title={busy ? `Running ${checks.length} of 14` : 'Run all checks'}
-          onPress={runAllChecks}
+          onPress={() => runAllChecks()}
         />
         {checks.length > 0 && !busy && (
           <Text style={[styles.title, { color: passed === checks.length ? c.good : c.text }]}>
