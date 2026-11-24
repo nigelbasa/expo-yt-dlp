@@ -1,16 +1,16 @@
 {
   "schema": 1,
-  "sequence": 2,
-  "published": "2026-11-21T14:51:30Z",
-  "expires": "2026-12-21T14:51:30Z",
+  "sequence": 3,
+  "published": "2026-11-24T18:07:12Z",
+  "expires": "2026-12-24T18:07:12Z",
   "shells": {
     "1": ">=0.1.1"
   },
   "bundles": [
     {
       "runtimeApi": 1,
-      "bundleId": "42ae5b832d0deb75",
-      "ytDlp": "2026.10.26",
+      "bundleId": "7ddac0384788e2b9",
+      "ytDlp": "2026.11.23",
       "extractors": [
         "FacebookAdsIE",
         "FacebookIE",
@@ -37,6 +37,7 @@
         "TwitterAmplifyIE",
         "TwitterBroadcastIE",
         "TwitterCardIE",
+        "TwitterEventIE",
         "TwitterIE",
         "TwitterShortenerIE",
         "TwitterSpacesIE",
@@ -61,9 +62,9 @@
         "YoutubeYtBeIE",
         "YoutubeYtUserIE"
       ],
-      "url": "https://github.com/nigelbasa/expo-yt-dlp/releases/download/bundle-2026.10.26-api1/site-packages.zip",
-      "size": 1504695,
-      "sha256": "42ae5b832d0deb7578f00225f03957db186dde14af6383cf97eb1d4f04599289"
+      "url": "https://github.com/nigelbasa/expo-yt-dlp/releases/download/bundle-2026.11.23-api1/site-packages.zip",
+      "size": 1496152,
+      "sha256": "7ddac0384788e2b94b49705d43fed15d4a2ee7a4308a6c304ae33cd6bf71ac71"
     }
   ],
   "revoked": []
